@@ -1,0 +1,6 @@
+{
+  "name": "CareSense",
+  "description": "AI-assisted early-warning and clinical decision-support platform for sepsis risk prediction.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
