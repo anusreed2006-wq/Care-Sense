@@ -15,6 +15,7 @@ import {
   ChevronRight,
   Shield,
   Radio,
+  Cpu,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -55,6 +56,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'analytics', label: 'Analytics', icon: BarChart3, enabled: featureToggles.enableAnalyticsTab },
     { id: 'model-insights', label: 'Model Insights', icon: BrainCircuit },
     { id: 'simulation', label: 'Simulation Lab', icon: Sliders, enabled: featureToggles.enableSimulationLab },
+    {
+      id: 'prototype',
+      label: 'Live Prototype',
+      icon: Cpu,
+      badge: 'Hardware',
+      badgeColor: 'bg-emerald-500 text-white',
+      enabled: featureToggles.enablePrototypeTab !== false,
+    },
     { id: 'reports', label: 'Reports', icon: FileText, enabled: featureToggles.enableReportsTab },
     { id: 'settings', label: 'Settings', icon: Settings },
     {

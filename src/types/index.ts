@@ -92,6 +92,9 @@ export interface RiskPrediction {
   previous_probability?: number;
   change?: number;
   created_at?: string;
+  data_quality_flags?: string[];
+  clinically_validated?: boolean;
+  notice?: string;
 }
 
 export type ShapDirection = 'INCREASES_RISK' | 'DECREASES_RISK' | 'NEUTRAL';
@@ -182,6 +185,10 @@ export interface EnrichedPatientData {
   explanations: RiskExplanation[];
   activeAlerts: Alert[];
   recentTimeline: TimelineEvent[];
+  dataQualityFlags?: string[];
+  backendPatientId?: string;
+  isBackendConnected?: boolean;
+  clinicallyValidated?: boolean;
 }
 
 export type AppMode = 'demo' | 'live';
@@ -193,6 +200,7 @@ export type NavigationTab =
   | 'analytics'
   | 'model-insights'
   | 'simulation'
+  | 'prototype'
   | 'reports'
   | 'settings'
   | 'admin';
@@ -219,6 +227,7 @@ export interface AppFeatureToggles {
   enableAnalyticsTab: boolean;
   enableReportsTab: boolean;
   enableMicroWindows: boolean;
+  enablePrototypeTab?: boolean;
 
   // Hidden patient IDs
   hiddenPatientIds: string[];
@@ -245,3 +254,131 @@ export interface MetricHistoryModalData {
   referenceLineLow?: number;
   referenceLineHigh?: number;
 }
+
+export interface CareSenseBackendHealth {
+  status: string;
+  model_available: boolean;
+  model_version: string;
+  feature_version: string;
+  model_error: string | null;
+  predictor_source: string;
+  clinical_reference_available: boolean;
+  storage: string;
+  clinically_validated: boolean;
+  hardware_connected: boolean;
+}
+
+export interface CareSenseBackendTopFeature {
+  feature: string;
+  value: number;
+  shap_value: number;
+  magnitude: number;
+  direction: 'increases risk' | 'decreases risk' | string;
+  source: string;
+  operation: string;
+  units: string;
+}
+
+export interface CareSenseBackendPredictionResponse {
+  risk_probability: number;
+  risk_tier: 'Lower' | 'Watch' | 'Elevated' | 'Critical' | string;
+  risk_status: string;
+  status: string;
+  top_features: CareSenseBackendTopFeature[];
+  explanation: {
+    method: string;
+    units: string;
+    top_features: CareSenseBackendTopFeature[];
+    base_value: number;
+    model_margin: number;
+    sum_all_contributions?: number;
+    feature_count: number;
+    note?: string;
+  };
+  current_values: Record<string, number | null>;
+  icu_hour: number;
+  model_version: string;
+  feature_version: string;
+  data_quality_flags: string[];
+  thresholds: {
+    watch: number;
+    elevated: number;
+    critical_strictly_above: number;
+  };
+  clinically_validated: boolean;
+  notice?: string;
+  patient_id: string;
+  synthetic?: boolean;
+  history_sha256?: string;
+  history_rows?: number;
+}
+
+export interface CareSenseBackendTrajectoryRow {
+  icu_hour: number;
+  current_values: Record<string, number | null>;
+  risk_probability: number;
+  risk_tier: 'Lower' | 'Watch' | 'Elevated' | 'Critical' | string;
+  risk_status: string;
+  status: string;
+}
+
+export interface CareSenseBackendTrajectoryResponse {
+  model_version: string;
+  feature_version: string;
+  rows: CareSenseBackendTrajectoryRow[];
+  clinically_validated: boolean;
+  patient_id: string;
+  synthetic?: boolean;
+  history_sha256?: string;
+  history_rows?: number;
+}
+
+export interface BackendConnectionTestResult {
+  success: boolean;
+  url: string;
+  latencyMs: number;
+  health?: CareSenseBackendHealth;
+  httpStatus?: number;
+  errorTitle?: string;
+  errorDescription?: string;
+  troubleshootingTips?: string[];
+  testedAt: string;
+}
+
+export interface SimulationBackendTestResult {
+  success: boolean;
+  url: string;
+  latencyMs: number;
+  risk_probability: number;
+  risk_tier: string;
+  risk_status: string;
+  model_version: string;
+  feature_version?: string;
+  top_features: CareSenseBackendTopFeature[];
+  data_quality_flags: string[];
+  clinically_validated: boolean;
+  thresholds?: {
+    watch: number;
+    elevated: number;
+    critical_strictly_above: number;
+  };
+  testedAt: string;
+  patient_id?: string;
+  history_rows?: number;
+  trajectory?: Array<{
+    icu_hour: number;
+    risk_probability: number;
+    risk_tier: string;
+    risk_status?: string;
+  }>;
+  cohort_patient_code?: string;
+  longitudinal_mode?: boolean;
+  sentValues: {
+    vitals: Record<string, any>;
+    labs: Record<string, any>;
+  };
+  error?: string;
+  errorDescription?: string;
+}
+
+

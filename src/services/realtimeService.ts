@@ -32,18 +32,22 @@ class RealtimeManager {
     if (!supabase) return;
 
     try {
-      // Channel for risk predictions
-      supabase
-        .channel('public:risk_predictions')
-        .on(
-          'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'risk_predictions' },
-          payload => {
-            const pred = payload.new as RiskPrediction;
-            this.predictionListeners.forEach(cb => cb(pred));
-          }
-        )
-        .subscribe();
+      // NOTE: In LIVE mode, the verified CareSense FastAPI backend on Render is the single source of truth for model inference.
+      // The old Supabase "LIVE MODEL STREAM" for model predictions (risk_predictions) is disabled in LIVE mode.
+      // Unrelated Supabase functionality (alerts, vitals) remains operational.
+      if (!isLiveMode) {
+        supabase
+          .channel('public:risk_predictions')
+          .on(
+            'postgres_changes',
+            { event: 'INSERT', schema: 'public', table: 'risk_predictions' },
+            payload => {
+              const pred = payload.new as RiskPrediction;
+              this.predictionListeners.forEach(cb => cb(pred));
+            }
+          )
+          .subscribe();
+      }
 
       // Channel for alerts
       supabase

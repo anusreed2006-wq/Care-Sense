@@ -11,6 +11,7 @@ import {
   ChevronDown,
   Building2,
   Cpu,
+  Radio,
   Menu,
   Shield,
 } from 'lucide-react';
@@ -74,6 +75,16 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebarMobile }) => {
         >
           <Cpu size={12} className={appMode === 'demo' ? 'text-amber-600' : 'text-indigo-600'} />
           <span>{appMode === 'demo' ? 'DEMO MODE' : 'LIVE MODEL'}</span>
+        </button>
+
+        {/* Prototype Hardware Quick Link */}
+        <button
+          onClick={() => setActiveTab('prototype')}
+          className="hidden sm:inline-flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50/80 px-2.5 py-1 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition shadow-2xs"
+          title="Open Hardware Prototype Stream & Calculations"
+        >
+          <Radio size={12} className="text-indigo-600 animate-pulse" />
+          <span>Prototype Stream</span>
         </button>
 
         {/* Network status */}

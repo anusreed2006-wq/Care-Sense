@@ -3,6 +3,8 @@ import { useCareSense } from '../hooks/useCareSense';
 import { RiskBadge } from '../components/common/RiskBadge';
 import { patientService } from '../services/patientService';
 import { Patient, RiskTier } from '../types';
+import { BACKEND_VERIFIED_COHORT } from '../data/demoData';
+import { getPatientHourlyHistory } from '../data/patientHistoryDataset';
 import {
   Users,
   UserPlus,
@@ -139,23 +141,17 @@ export const PatientsView: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {filtered.map(p => {
           const isDefault = patientService.isDefaultSimulationPatient(p.id);
-          const isP1042 = p.patient_code === 'P-1042';
-          const isP1024 = p.patient_code === 'P-1024';
-          const isP1018 = p.patient_code === 'P-1018';
-          const isP1033 = p.patient_code === 'P-1033';
+          const code = p.patient_code.toUpperCase();
+          const cohort = BACKEND_VERIFIED_COHORT[code];
+          const history = getPatientHourlyHistory(code);
+          const last = history && history.length > 0 ? history[history.length - 1] : null;
 
-          let tier: RiskTier = 'LOW';
-          let risk = 0.22;
-          if (isP1042) {
-            tier = 'CRITICAL';
-            risk = 0.94;
-          } else if (isP1024) {
-            tier = 'ELEVATED';
-            risk = 0.74;
-          } else if (isP1018 || isP1033) {
-            tier = 'WATCH';
-            risk = isP1018 ? 0.46 : 0.52;
-          }
+          const risk = cohort
+            ? cohort.risk_probability
+            : (last?.Lactate && last.Lactate > 2.0 ? 0.085 : 0.015);
+          const tier: RiskTier = cohort
+            ? cohort.risk_tier
+            : (risk >= 0.10 ? 'CRITICAL' : risk >= 0.06 ? 'ELEVATED' : risk >= 0.03 ? 'WATCH' : 'LOW');
 
           return (
             <div
@@ -185,7 +181,7 @@ export const PatientsView: React.FC = () => {
                 <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
                   <span className="text-slate-500 font-medium">Sepsis Probability:</span>
                   <span className="font-mono font-bold text-slate-900">
-                    {(risk * 100).toFixed(0)}% (p={risk.toFixed(2)})
+                    {(risk * 100).toFixed(1)}% (p={risk.toFixed(3)})
                   </span>
                 </div>
               </div>

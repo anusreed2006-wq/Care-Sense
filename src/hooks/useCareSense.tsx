@@ -15,11 +15,14 @@ import {
   RiskPrediction,
   AppFeatureToggles,
   MetricHistoryModalData,
+  CareSenseBackendHealth,
+  BackendConnectionTestResult,
 } from '../types';
 import { authService } from '../services/authService';
 import { patientService } from '../services/patientService';
 import { alertService } from '../services/alertService';
 import { realtimeService } from '../services/realtimeService';
+import { caresenseApi } from '../services/caresenseApi';
 import { buildEnrichedPatient, ALL_DEMO_PATIENTS } from '../data/demoData';
 import { generateMetricHistory } from '../utils/metricHistoryGenerator';
 
@@ -40,6 +43,7 @@ const DEFAULT_FEATURE_TOGGLES: AppFeatureToggles = {
   enableAnalyticsTab: true,
   enableReportsTab: true,
   enableMicroWindows: true,
+  enablePrototypeTab: true,
   hiddenPatientIds: [],
 };
 
@@ -105,6 +109,16 @@ interface CareSenseContextType {
     vitalsUpdate: Partial<VitalSigns>,
     labsUpdate: Partial<EnrichedPatientData['latestLabs']>
   ) => void;
+
+  // Live CareSense API state & triggers
+  backendApiUrl: string;
+  updateBackendApiUrl: (url: string) => Promise<BackendConnectionTestResult>;
+  resetBackendApiUrl: () => Promise<void>;
+  refreshBackendHealth: () => Promise<void>;
+  isLiveInferring: boolean;
+  backendApiStatus: 'ready' | 'connecting' | 'error' | 'offline';
+  backendHealth: CareSenseBackendHealth | null;
+  triggerLivePrediction: () => Promise<void>;
 }
 
 const CareSenseContext = createContext<CareSenseContextType | undefined>(undefined);
@@ -115,9 +129,34 @@ export const CareSenseProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [patients, setPatients] = useState<Patient[]>(ALL_DEMO_PATIENTS);
   const [selectedPatientId, setSelectedPatientId] = useState<string>('p-1042-uuid');
   const [alerts, setAlerts] = useState<Alert[]>([]);
-  const [appMode, setAppMode] = useState<AppMode>('demo');
+  const [appMode, setAppMode] = useState<AppMode>(() => {
+    return ((import.meta.env.VITE_APP_MODE || 'live').toLowerCase() === 'live') ? 'live' : 'demo';
+  });
+  const [isLiveInferring, setIsLiveInferring] = useState<boolean>(false);
+  const [backendApiStatus, setBackendApiStatus] = useState<'ready' | 'connecting' | 'error' | 'offline'>('connecting');
+  const [backendHealth, setBackendHealth] = useState<CareSenseBackendHealth | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  const addToast = useCallback((toast: Omit<ToastMessage, 'id' | 'timestamp'>) => {
+    const id = `toast-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const newToast: ToastMessage = {
+      ...toast,
+      id,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+    };
+    setToasts(prev => [newToast, ...prev.slice(0, 4)]);
+
+    // Auto-dismiss after 6 seconds
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 6000);
+  }, []);
+
+  const removeToast = useCallback((id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
+
   const [activePatientData, setActivePatientData] = useState<EnrichedPatientData | null>(null);
 
   // Micro Window Telemetry State
@@ -234,16 +273,114 @@ export const CareSenseProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   ) => {
     setActivePatientData(prev => {
       if (!prev || prev.patient.id !== patientId) return prev;
-      return {
+      const updatedVitals = { ...prev.latestVitals, ...vitalsUpdate };
+      const updatedLabs = { ...prev.latestLabs, ...labsUpdate };
+
+      const updated = {
         ...prev,
-        latestVitals: { ...prev.latestVitals, ...vitalsUpdate },
-        latestLabs: { ...prev.latestLabs, ...labsUpdate },
+        latestVitals: updatedVitals,
+        latestLabs: updatedLabs,
       };
+
+      if (appMode === 'live') {
+        setIsLiveInferring(true);
+        caresenseApi.syncPatientAndPredict(
+          prev.patient,
+          updatedVitals,
+          updatedLabs,
+          prev.previousVitals,
+          prev.previousLabs
+        ).then(res => {
+          setActivePatientData(curr => {
+            if (!curr || curr.patient.id !== patientId) return curr;
+            return {
+              ...curr,
+              currentPrediction: res.prediction,
+              explanations: res.explanations,
+              riskHistory: res.trajectory.length > 0 ? res.trajectory : curr.riskHistory,
+              dataQualityFlags: res.dataQualityFlags,
+              backendPatientId: res.backendPatientId,
+              isBackendConnected: true,
+              clinicallyValidated: res.clinicallyValidated,
+            };
+          });
+          setIsLiveInferring(false);
+        }).catch(err => {
+          console.warn('[CareSense API] Error predicting after clinical data update:', err);
+          setIsLiveInferring(false);
+        });
+      }
+
+      return updated;
     });
-  }, []);
+  }, [appMode]);
 
   // Visible patients filtered by admin feature toggles
   const visiblePatients = patients.filter(p => !featureToggles.hiddenPatientIds.includes(p.id));
+
+  // Configurable CareSense Backend URL state
+  const [backendApiUrl, setBackendApiUrlState] = useState<string>(() => caresenseApi.getApiUrl());
+
+  const refreshBackendHealth = useCallback(async () => {
+    setBackendApiStatus('connecting');
+    try {
+      const health = await caresenseApi.getHealth();
+      setBackendHealth(health);
+      setBackendApiStatus('ready');
+    } catch (err) {
+      console.warn('[CareSense API] Backend health check error:', err);
+      setBackendApiStatus('error');
+    }
+  }, []);
+
+  const updateBackendApiUrl = useCallback(async (newUrl: string): Promise<BackendConnectionTestResult> => {
+    setBackendApiStatus('connecting');
+    const testResult = await caresenseApi.testConnection(newUrl);
+    if (testResult.success) {
+      caresenseApi.setApiUrl(newUrl);
+      setBackendApiUrlState(caresenseApi.getApiUrl());
+      setBackendHealth(testResult.health || null);
+      setBackendApiStatus('ready');
+      // If patient active, trigger live prediction
+      if (activePatientData) {
+        caresenseApi.syncPatientAndPredict(
+          activePatientData.patient,
+          activePatientData.latestVitals,
+          activePatientData.latestLabs
+        ).then(res => {
+          setActivePatientData(curr => {
+            if (!curr) return curr;
+            return {
+              ...curr,
+              currentPrediction: res.prediction,
+              explanations: res.explanations,
+              riskHistory: res.trajectory.length > 0 ? res.trajectory : curr.riskHistory,
+              dataQualityFlags: res.dataQualityFlags,
+              backendPatientId: res.backendPatientId,
+              isBackendConnected: true,
+              clinicallyValidated: res.clinicallyValidated,
+            };
+          });
+        }).catch(err => {
+          console.warn('[CareSense API] Error re-predicting after URL update:', err);
+        });
+      }
+    } else {
+      setBackendApiStatus('error');
+    }
+    return testResult;
+  }, [activePatientData]);
+
+  const resetBackendApiUrl = useCallback(async () => {
+    const defaultUrl = caresenseApi.resetApiUrl();
+    setBackendApiUrlState(defaultUrl);
+    await refreshBackendHealth();
+  }, [refreshBackendHealth]);
+
+  // Check backend health on initial mount
+  useEffect(() => {
+    refreshBackendHealth();
+  }, [refreshBackendHealth]);
 
   // Load user session
   useEffect(() => {
@@ -268,17 +405,51 @@ export const CareSenseProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     refreshAlerts();
   }, [refreshPatients, refreshAlerts]);
 
-  // Sync enriched active patient data
+  // Sync enriched active patient data and run real backend prediction in LIVE mode
   useEffect(() => {
     const p = patients.find(pt => pt.id === selectedPatientId || pt.patient_code === selectedPatientId) || patients[0];
-    if (p) {
-      const idx = patients.indexOf(p);
-      const enriched = buildEnrichedPatient(p, idx);
-      // Sync patient's current alerts
-      enriched.activeAlerts = alerts.filter(a => a.patient_id === p.id && a.status === 'ACTIVE');
+    if (!p) return;
+
+    let isCancelled = false;
+    const idx = patients.indexOf(p);
+    const enriched = buildEnrichedPatient(p, idx);
+    enriched.activeAlerts = alerts.filter(a => a.patient_id === p.id && a.status === 'ACTIVE');
+
+    if (appMode === 'live') {
+      setIsLiveInferring(true);
+      caresenseApi.syncPatientAndPredict(
+        p,
+        enriched.latestVitals,
+        enriched.latestLabs,
+        enriched.previousVitals,
+        enriched.previousLabs
+      ).then(res => {
+        if (isCancelled) return;
+        setActivePatientData({
+          ...enriched,
+          currentPrediction: res.prediction,
+          explanations: res.explanations,
+          riskHistory: res.trajectory.length > 0 ? res.trajectory : enriched.riskHistory,
+          dataQualityFlags: res.dataQualityFlags,
+          backendPatientId: res.backendPatientId,
+          isBackendConnected: true,
+          clinicallyValidated: res.clinicallyValidated,
+        });
+        setIsLiveInferring(false);
+      }).catch(err => {
+        if (isCancelled) return;
+        console.warn('[CareSense API] Live backend sync failed, using baseline telemetry:', err);
+        setIsLiveInferring(false);
+        setActivePatientData(enriched);
+      });
+    } else {
       setActivePatientData(enriched);
     }
-  }, [selectedPatientId, patients, alerts]);
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [selectedPatientId, patients, alerts, appMode]);
 
   // Realtime Telemetry & Alert Subscriptions
   useEffect(() => {
@@ -310,6 +481,8 @@ export const CareSenseProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     });
 
     const unsubPred = realtimeService.onPrediction(pred => {
+      // In LIVE mode, the Render backend is the single source of truth for predictions; ignore old demo stream
+      if (appMode === 'live') return;
       setActivePatientData(prev => {
         if (!prev || prev.patient.id !== pred.patient_id) return prev;
         return {
@@ -324,26 +497,7 @@ export const CareSenseProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       unsubVitals();
       unsubPred();
     };
-  }, []);
-
-  const addToast = useCallback((toast: Omit<ToastMessage, 'id' | 'timestamp'>) => {
-    const id = `toast-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-    const newToast: ToastMessage = {
-      ...toast,
-      id,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-    };
-    setToasts(prev => [newToast, ...prev.slice(0, 4)]);
-
-    // Auto-dismiss after 6 seconds
-    setTimeout(() => {
-      setToasts(prev => prev.filter(t => t.id !== id));
-    }, 6000);
-  }, []);
-
-  const removeToast = useCallback((id: string) => {
-    setToasts(prev => prev.filter(t => t.id !== id));
-  }, []);
+  }, [appMode, addToast]);
 
   const acknowledgeAlert = useCallback(async (id: string) => {
     await alertService.acknowledgeAlert(id);
@@ -377,6 +531,47 @@ export const CareSenseProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const criticalCount = 2;
   const highRiskCount = 5;
   const monitoringCoverage = '100%';
+
+  const triggerLivePrediction = useCallback(async () => {
+    if (!activePatientData) return;
+    setIsLiveInferring(true);
+    try {
+      const res = await caresenseApi.syncPatientAndPredict(
+        activePatientData.patient,
+        activePatientData.latestVitals,
+        activePatientData.latestLabs,
+        activePatientData.previousVitals,
+        activePatientData.previousLabs
+      );
+      setActivePatientData(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          currentPrediction: res.prediction,
+          explanations: res.explanations,
+          riskHistory: res.trajectory.length > 0 ? res.trajectory : prev.riskHistory,
+          dataQualityFlags: res.dataQualityFlags,
+          backendPatientId: res.backendPatientId,
+          isBackendConnected: true,
+          clinicallyValidated: res.clinicallyValidated,
+        };
+      });
+      addToast({
+        type: 'success',
+        title: 'Model Prediction Synced',
+        description: `Verified Render backend returned ${(res.prediction.risk_probability * 100).toFixed(1)}% risk (${res.prediction.risk_tier}).`,
+      });
+    } catch (err: any) {
+      console.error('[CareSense API] Manual trigger failed:', err);
+      addToast({
+        type: 'critical',
+        title: 'Backend Prediction Failed',
+        description: err.message || 'Error communicating with CareSense API.',
+      });
+    } finally {
+      setIsLiveInferring(false);
+    }
+  }, [activePatientData, addToast]);
 
   return (
     <CareSenseContext.Provider
@@ -422,6 +617,14 @@ export const CareSenseProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         togglePatientVisibility,
         updatePatient,
         updatePatientClinicalData,
+        backendApiUrl,
+        updateBackendApiUrl,
+        resetBackendApiUrl,
+        refreshBackendHealth,
+        isLiveInferring,
+        backendApiStatus,
+        backendHealth,
+        triggerLivePrediction,
       }}
     >
       {children}

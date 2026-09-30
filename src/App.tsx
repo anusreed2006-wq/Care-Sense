@@ -13,6 +13,7 @@ import { AlertsView } from './views/AlertsView';
 import { AnalyticsView } from './views/AnalyticsView';
 import { ModelInsightsView } from './views/ModelInsightsView';
 import { SimulationLabView } from './views/SimulationLabView';
+import { PrototypeStreamView } from './views/PrototypeStreamView';
 import { ReportsView } from './views/ReportsView';
 import { SettingsView } from './views/SettingsView';
 import { AdminPanelView } from './views/AdminPanelView';
@@ -68,6 +69,7 @@ const MainLayout: React.FC = () => {
           {activeTab === 'analytics' && <AnalyticsView />}
           {activeTab === 'model-insights' && <ModelInsightsView />}
           {activeTab === 'simulation' && <SimulationLabView />}
+          {activeTab === 'prototype' && <PrototypeStreamView />}
           {activeTab === 'reports' && <ReportsView />}
           {activeTab === 'settings' && <SettingsView />}
           {activeTab === 'admin' && <AdminPanelView />}

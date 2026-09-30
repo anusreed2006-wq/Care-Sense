@@ -21,6 +21,9 @@ import {
   Info,
   Sliders,
   Maximize2,
+  Cpu,
+  RefreshCw,
+  ShieldAlert,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -31,10 +34,33 @@ import {
   Tooltip,
   CartesianGrid,
   ReferenceLine,
-  BarChart,
-  Bar,
-  Cell,
 } from 'recharts';
+
+/**
+ * Diagnostic action guidelines for key clinical drivers
+ */
+const getClinicalActionGuideline = (featureName: string): string => {
+  const lower = featureName.toLowerCase();
+  if (lower.includes('lactate')) {
+    return 'Re-measure serum lactate every 2–4 hours; target >20% clearance per 2 hours to confirm adequate tissue reperfusion.';
+  }
+  if (lower.includes('pressure') || lower.includes('map') || lower.includes('sbp') || lower.includes('bp')) {
+    return 'Maintain MAP ≥ 65 mmHg. Confirm fluid responsiveness; titrate norepinephrine if hypotension persists after initial fluid challenge.';
+  }
+  if (lower.includes('resp') || lower.includes('spo2') || lower.includes('rr') || lower.includes('o2')) {
+    return 'Perform arterial blood gas (ABG); evaluate work of breathing, calculate PaO2/FiO2 ratio, and escalate supplemental oxygen or non-invasive ventilation.';
+  }
+  if (lower.includes('wbc') || lower.includes('band') || lower.includes('temp') || lower.includes('crp') || lower.includes('procalcitonin')) {
+    return 'Obtain 2 sets of blood cultures prior to broad-spectrum antimicrobial administration within the first 60 minutes; identify septic source.';
+  }
+  if (lower.includes('creatinine') || lower.includes('bun') || lower.includes('renal') || lower.includes('kidney') || lower.includes('urine')) {
+    return 'Strict hourly urine output monitoring (>0.5 mL/kg/h); avoid nephrotoxic medications and adjust antimicrobial dosing for renal clearance.';
+  }
+  if (lower.includes('platelet') || lower.includes('coag') || lower.includes('inr')) {
+    return 'Monitor for disseminated intravascular coagulation (DIC); assess for microvascular thrombosis or bleeding signs.';
+  }
+  return 'Review dynamic bedside trends, correlate with clinical exam, and maintain targeted organ-support protocols.';
+};
 
 export const RiskMonitoringView: React.FC = () => {
   const {
@@ -47,6 +73,9 @@ export const RiskMonitoringView: React.FC = () => {
     addToast,
     openMetricHistory,
     featureToggles,
+    isLiveInferring,
+    triggerLivePrediction,
+    backendApiStatus,
   } = useCareSense();
 
   const [timeHorizon, setTimeHorizon] = useState<'6H' | '12H' | '24H' | '48H'>('24H');
@@ -81,16 +110,6 @@ export const RiskMonitoringView: React.FC = () => {
   };
 
   const isCritical = currentPrediction.risk_tier === 'CRITICAL';
-
-  // Format SHAP data for chart
-  const shapChartData = explanations.map(exp => ({
-    name: exp.feature_name,
-    value: exp.shap_value,
-    absVal: Math.abs(exp.shap_value),
-    feature_value: exp.feature_value,
-    direction: exp.direction,
-    context: exp.clinical_context,
-  }));
 
   // Smooth scroll redirect helper to target specific clinical section
   const scrollToSection = (elementId: string, ringColorClass = 'ring-sky-500') => {
@@ -302,15 +321,17 @@ export const RiskMonitoringView: React.FC = () => {
               <div className="mt-6 pt-4 border-t border-slate-100 space-y-2 text-xs">
                 <div className="flex justify-between text-slate-600">
                   <span>Prediction Horizon:</span>
-                  <strong className="text-slate-900">Next 6 Hours</strong>
+                  <strong className="text-slate-900">{currentPrediction.prediction_horizon || 'Next 6 Hours'}</strong>
                 </div>
                 <div className="flex justify-between text-slate-600">
-                  <span>Model Confidence:</span>
-                  <strong className="text-emerald-700">98.4% (Isotonic Calibrated)</strong>
+                  <span>Model Version:</span>
+                  <strong className="font-mono text-sky-700">{currentPrediction.model_version || 'caresense-0.1.0-676972cccc'}</strong>
                 </div>
                 <div className="flex justify-between text-slate-600">
-                  <span>Clinical Subtype:</span>
-                  <strong className="text-slate-900">Hyperdynamic Septic Shock</strong>
+                  <span>Validation Status:</span>
+                  <strong className={currentPrediction.clinically_validated ? "text-emerald-700" : "text-amber-700"}>
+                    {currentPrediction.clinically_validated ? 'Clinically Validated' : 'Research Prototype'}
+                  </strong>
                 </div>
               </div>
             </div>
@@ -399,100 +420,208 @@ export const RiskMonitoringView: React.FC = () => {
         </div>
       )}
 
+      {/* Data Quality Flags from Causal Hourly Pipeline */}
+      {currentPrediction.data_quality_flags && currentPrediction.data_quality_flags.length > 0 && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50/80 p-4 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-2.5">
+            <Info size={17} className="text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <div className="text-xs font-bold text-amber-900">
+                Data Quality & Preprocessing Notes
+              </div>
+              <div className="flex flex-wrap gap-1.5 mt-1">
+                {currentPrediction.data_quality_flags.map((flag: string) => (
+                  <span
+                    key={flag}
+                    className="rounded-md bg-amber-100 border border-amber-300/80 px-2 py-0.5 text-[11px] font-mono font-bold text-amber-950"
+                  >
+                    {flag}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+          <span className="text-[11px] text-amber-800 font-medium shrink-0">
+            CareSense Causal Hourly Pipeline
+          </span>
+        </div>
+      )}
+
       {/* Row: Explainable AI SHAP Feature Importance (Section 19) */}
       {featureToggles.showExplainableAI && (
         <div
           id="section-shap-explanation"
           className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs scroll-mt-24 transition-all duration-300"
         >
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5 pb-4 border-b border-slate-100">
             <div>
               <div className="flex items-center gap-2">
                 <BrainCircuit size={18} className="text-sky-600" />
-                <h2 className="text-sm font-bold text-slate-900">
+                <h2 className="text-base font-bold text-slate-900">
                   Explainable AI: Key Clinical Drivers (SHAP Attributions)
                 </h2>
               </div>
-              <p className="text-xs text-slate-500">
-                Marginal feature contributions quantifying why the model predicted risk = {currentPrediction.risk_probability.toFixed(2)}
+              <p className="text-xs text-slate-500 mt-0.5">
+                Quantified diagnostic attributions explaining the model's predicted sepsis risk ({Math.round(currentPrediction.risk_probability * 100)}%)
               </p>
             </div>
-            <span className="text-xs font-semibold text-slate-500">
-              Model: LightGBM + Temporal Bi-LSTM
-            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={triggerLivePrediction}
+                disabled={isLiveInferring}
+                className="inline-flex items-center gap-1.5 rounded-full bg-sky-50 border border-sky-200 px-3 py-1 text-xs font-bold text-sky-800 hover:bg-sky-100 transition-colors disabled:opacity-50"
+                title="Sync prediction with live CareSense Render backend"
+              >
+                <RefreshCw size={12} className={isLiveInferring ? 'animate-spin' : ''} />
+                <span>{isLiveInferring ? 'Predicting...' : `Model: ${currentPrediction.model_version || 'caresense-0.1.0-676972cccc'}`}</span>
+              </button>
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-50 border border-rose-200 px-3 py-1 text-xs font-bold text-rose-700">
+                {explanations.length} Primary Drivers
+              </span>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
-            {/* SHAP Horizontal Contribution Chart */}
-            <div className="lg:col-span-6 h-60 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={shapChartData}
-                  layout="vertical"
-                  margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
-                  <XAxis type="number" tick={{ fontSize: 10, fill: '#64748b' }} tickFormatter={v => `+${v.toFixed(2)}`} />
-                  <YAxis
-                    dataKey="name"
-                    type="category"
-                    tick={{ fontSize: 11, fill: '#334155' }}
-                    width={140}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: '#0f172a',
-                      border: 'none',
-                      borderRadius: '8px',
-                      color: '#fff',
-                      fontSize: '11px',
-                    }}
-                    formatter={(val: any, name: any, item: any) => [
-                      `+${Number(val).toFixed(3)} (${item.payload.feature_value})`,
-                      'SHAP Contribution',
-                    ]}
-                  />
-                  <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={16}>
-                    {shapChartData.map((entry, index) => (
-                      <Cell
-                        key={`cell-${index}`}
-                        fill={entry.direction === 'INCREASES_RISK' ? '#ef4444' : '#10b981'}
-                      />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+          {/* Key Clinical Takeaways Summary Highlights */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+            <div className="rounded-xl border border-rose-100 bg-rose-50/50 p-3.5">
+              <div className="text-[11px] font-bold uppercase tracking-wider text-rose-800">
+                Primary Clinical Trigger
+              </div>
+              <div className="text-sm font-bold text-slate-900 mt-0.5 truncate">
+                {explanations[0]?.feature_name || 'Serum Lactate'}
+              </div>
+              <div className="text-xs font-semibold text-rose-700 font-mono mt-0.5">
+                {explanations[0]?.feature_value || 'Elevated'}
+              </div>
+              <p className="text-[11px] text-slate-600 mt-1 line-clamp-2">
+                {explanations[0]?.clinical_context || 'Severe hypoperfusion requiring prompt hemodynamic correction.'}
+              </p>
             </div>
 
-            {/* Clinician Narrative Breakdown */}
-            <div className="lg:col-span-6 space-y-3">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">
-                Clinical Context & Diagnostic Rationale
-              </h3>
-              <div className="space-y-2.5">
-                {explanations.slice(0, 4).map(exp => (
-                  <div
-                    key={exp.id}
-                    className="rounded-xl border border-slate-100 bg-slate-50/60 p-3 flex items-start justify-between gap-3 text-xs"
-                  >
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-slate-900">{exp.feature_name}:</span>
-                        <span className="font-mono font-semibold text-rose-700">{exp.feature_value}</span>
-                      </div>
-                      <p className="text-slate-600 text-[11px] mt-0.5">
-                        {exp.clinical_context}
-                      </p>
-                    </div>
-                    <span className="font-mono text-xs font-bold text-rose-600 shrink-0">
-                      +{exp.shap_value.toFixed(3)}
-                    </span>
-                  </div>
-                ))}
+            <div className="rounded-xl border border-amber-100 bg-amber-50/50 p-3.5">
+              <div className="text-[11px] font-bold uppercase tracking-wider text-amber-800">
+                Dominant Pathophysiology
               </div>
+              <div className="text-sm font-bold text-slate-900 mt-0.5">
+                Distributive Shock & Vasoplegia
+              </div>
+              <div className="text-xs text-amber-900 font-medium mt-0.5">
+                Systemic vasodilation & microvascular leak
+              </div>
+              <p className="text-[11px] text-slate-600 mt-1">
+                Autoregulatory perfusion threshold compromised with acute metabolic compensation.
+              </p>
             </div>
+
+            <div className="rounded-xl border border-sky-100 bg-sky-50/50 p-3.5">
+              <div className="text-[11px] font-bold uppercase tracking-wider text-sky-800">
+                Immediate Clinical Focus
+              </div>
+              <div className="text-sm font-bold text-slate-900 mt-0.5">
+                Sepsis-3 1-Hour Bundle
+              </div>
+              <div className="text-xs text-sky-900 font-medium mt-0.5">
+                Cultures • Antibiotics • Volume • Vasopressors
+              </div>
+              <p className="text-[11px] text-slate-600 mt-1">
+                Target MAP ≥ 65 mmHg and demonstrate ≥20% lactate clearance over 2 hours.
+              </p>
+            </div>
+          </div>
+
+          {/* Structured List of Important Clinical Points */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                Important Clinical Points (Ranked by Attribution Weight)
+              </h3>
+              <span className="text-[11px] font-medium text-slate-500">
+                Structured clinical breakdown
+              </span>
+            </div>
+
+            <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 overflow-hidden bg-white shadow-2xs">
+              {explanations.map((exp, index) => {
+                const isPositive = exp.direction === 'INCREASES_RISK' || exp.shap_value > 0;
+                const impactPercentage = Math.abs(exp.shap_value * 100).toFixed(1);
+                const isHighImpact = Math.abs(exp.shap_value) >= 0.2;
+                const isModerateImpact = Math.abs(exp.shap_value) >= 0.1;
+
+                return (
+                  <div
+                    key={exp.id || index}
+                    className="p-4 hover:bg-slate-50/70 transition-colors flex flex-col sm:flex-row sm:items-start justify-between gap-4"
+                  >
+                    <div className="flex items-start gap-3.5">
+                      {/* Numeric Rank Badge */}
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-white font-mono text-xs font-bold shadow-2xs">
+                        #{exp.rank || index + 1}
+                      </span>
+
+                      <div className="space-y-1.5">
+                        {/* Driver Title and Value */}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-bold text-slate-900">
+                            {exp.feature_name}
+                          </span>
+                          <span className="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5 font-mono text-xs font-bold text-slate-800 border border-slate-200">
+                            Observed: {exp.feature_value}
+                          </span>
+                        </div>
+
+                        {/* Important Point 1: Clinical Context & Rationale */}
+                        <div className="text-xs text-slate-700 flex items-start gap-2">
+                          <span className="font-bold text-slate-900 shrink-0">• Clinical Rationale:</span>
+                          <span>{exp.clinical_context}</span>
+                        </div>
+
+                        {/* Important Point 2: Actionable Care Guideline */}
+                        <div className="text-xs text-slate-600 flex items-start gap-2">
+                          <span className="font-bold text-indigo-900 shrink-0">• Bedside Action:</span>
+                          <span className="text-slate-600">{getClinicalActionGuideline(exp.feature_name)}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Attribution & Impact Badges */}
+                    <div className="sm:text-right shrink-0 flex flex-row sm:flex-col items-center sm:items-end justify-between sm:justify-start gap-1.5 pl-10 sm:pl-0">
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-bold font-mono ${
+                          isPositive
+                            ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                            : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        }`}
+                      >
+                        {isPositive ? `+${exp.shap_value.toFixed(3)}` : exp.shap_value.toFixed(3)}
+                        <span className="text-[10px] font-sans font-medium text-slate-500">
+                          ({isPositive ? '+' : '-'}{impactPercentage}%)
+                        </span>
+                      </span>
+
+                      <span
+                        className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                          isHighImpact
+                            ? 'bg-rose-100 text-rose-800'
+                            : isModerateImpact
+                            ? 'bg-amber-100 text-amber-800'
+                            : 'bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        {isHighImpact ? 'High Impact' : isModerateImpact ? 'Moderate Impact' : 'Standard'}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Research Prototype Disclaimer Notice */}
+          <div className="mt-5 pt-3 border-t border-slate-100 text-[11px] text-slate-500 italic flex items-center gap-2">
+            <ShieldAlert size={14} className="text-amber-600 shrink-0" />
+            <span>
+              {currentPrediction.notice || 'Research prototype: model-estimated risk supports clinical judgment and does not diagnose sepsis. Prototype risk tiers are not clinically validated.'}
+            </span>
           </div>
         </div>
       )}

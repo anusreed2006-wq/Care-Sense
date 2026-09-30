@@ -649,7 +649,23 @@ export const AdminPanelView: React.FC = () => {
                 3. Sidebar Navigation Module Toggles
               </h3>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* Prototype Stream in Nav */}
+                <div className="flex items-center justify-between p-4 rounded-xl border border-slate-200 bg-slate-50/50">
+                  <div>
+                    <strong className="text-xs font-bold text-slate-900 block">Live Prototype Stream</strong>
+                    <span className="text-[11px] text-slate-500">Hardware & Serial Link</span>
+                  </div>
+                  <button
+                    onClick={() => setFeatureToggle('enablePrototypeTab', featureToggles.enablePrototypeTab === false ? true : false)}
+                    className={`flex items-center gap-1 rounded-full p-1 w-12 transition ${
+                      featureToggles.enablePrototypeTab !== false ? 'bg-indigo-600 justify-end' : 'bg-slate-300 justify-start'
+                    }`}
+                  >
+                    <div className="h-4 w-4 rounded-full bg-white shadow-xs" />
+                  </button>
+                </div>
+
                 {/* Simulation Lab in Nav */}
                 <div className="flex items-center justify-between p-4 rounded-xl border border-slate-200 bg-slate-50/50">
                   <div>

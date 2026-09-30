@@ -31,95 +31,51 @@ import {
   BarChart,
   Bar,
 } from 'recharts';
+import { getPatientHourlyHistory } from '../data/patientHistoryDataset';
+import { BACKEND_VERIFIED_COHORT } from '../data/demoData';
 
-// Clinical risk calculation helper for patient census table & filtering
+// Clinical risk calculation helper for patient census table & filtering powered by CareSense XGBoost model
 const getPatientRiskData = (patient: { patient_code: string }) => {
-  const isP1042 = patient.patient_code === 'P-1042';
-  const isP1024 = patient.patient_code === 'P-1024';
-  const isP1018 = patient.patient_code === 'P-1018';
-  const isP1005 = patient.patient_code === 'P-1005';
-  const isP1033 = patient.patient_code === 'P-1033';
+  const code = patient.patient_code.toUpperCase();
+  const cohort = BACKEND_VERIFIED_COHORT[code];
+  const history = getPatientHourlyHistory(code);
+  const last = history && history.length > 0 ? history[history.length - 1] : null;
 
-  if (isP1042) {
+  const hr = last?.HR ? Math.round(last.HR) : 80;
+  const map = last?.MAP ? Math.round(last.MAP) : 75;
+  const spo2 = last?.O2Sat ? Math.round(last.O2Sat) : 98;
+  const temp = last?.Temp ? Number(last.Temp.toFixed(1)) : 37.0;
+  const lactate = last?.Lactate ? Number(last.Lactate.toFixed(1)) : 1.2;
+  const wbc = last?.WBC ? Number(last.WBC.toFixed(1)) : 7.5;
+
+  const vitalsStr = `HR ${hr} • MAP ${map} • SpO₂ ${spo2}% • ${temp}°C`;
+  const labsStr = `${lactate} mmol/L • ${wbc} k/µL`;
+
+  if (cohort) {
+    const prevRisk = cohort.trajectory && cohort.trajectory.length > 1
+      ? cohort.trajectory[cohort.trajectory.length - 2].risk
+      : cohort.risk_probability * 0.9;
+    const diff = Number((cohort.risk_probability - prevRisk).toFixed(3));
+    const changeStr = diff >= 0 ? `+${diff.toFixed(3)}` : `${diff.toFixed(3)}`;
+
     return {
-      risk: 0.94,
-      tier: 'CRITICAL' as RiskTier,
-      change: '+0.12',
-      vitalsStr: 'HR 121 • MAP 52 • SpO₂ 89% • 39.0°C',
-      labsStr: '4.2 mmol/L • 19.4 k/µL',
-    };
-  }
-  if (isP1024) {
-    return {
-      risk: 0.74,
-      tier: 'ELEVATED' as RiskTier,
-      change: '+0.16',
-      vitalsStr: 'HR 108 • MAP 63 • SpO₂ 91% • 38.8°C',
-      labsStr: '2.8 mmol/L • 16.2 k/µL',
-    };
-  }
-  if (isP1018) {
-    return {
-      risk: 0.46,
-      tier: 'WATCH' as RiskTier,
-      change: '+0.04',
-      vitalsStr: 'HR 98 • MAP 68 • SpO₂ 96% • 38.1°C',
-      labsStr: '1.8 mmol/L • 13.5 k/µL',
-    };
-  }
-  if (isP1033) {
-    return {
-      risk: 0.52,
-      tier: 'WATCH' as RiskTier,
-      change: '+0.03',
-      vitalsStr: 'HR 92 • MAP 64 • SpO₂ 95% • 37.8°C',
-      labsStr: '2.1 mmol/L • 14.8 k/µL',
-    };
-  }
-  if (isP1005) {
-    return {
-      risk: 0.12,
-      tier: 'LOW' as RiskTier,
-      change: '-0.06',
-      vitalsStr: 'HR 74 • MAP 82 • SpO₂ 98% • 36.8°C',
-      labsStr: '1.1 mmol/L • 7.2 k/µL',
+      risk: cohort.risk_probability,
+      tier: cohort.risk_tier,
+      change: changeStr,
+      vitalsStr,
+      labsStr,
     };
   }
 
-  const num = parseInt(patient.patient_code.replace(/\D/g, '') || '0', 10);
-  if (num % 5 === 0) {
-    return {
-      risk: 0.88,
-      tier: 'CRITICAL' as RiskTier,
-      change: '+0.10',
-      vitalsStr: 'HR 118 • MAP 55 • SpO₂ 90% • 38.9°C',
-      labsStr: '3.8 mmol/L • 18.2 k/µL',
-    };
-  }
-  if (num % 3 === 0) {
-    return {
-      risk: 0.68,
-      tier: 'ELEVATED' as RiskTier,
-      change: '+0.08',
-      vitalsStr: 'HR 104 • MAP 62 • SpO₂ 92% • 38.4°C',
-      labsStr: '2.4 mmol/L • 15.0 k/µL',
-    };
-  }
-  if (num % 2 === 0) {
-    return {
-      risk: 0.42,
-      tier: 'WATCH' as RiskTier,
-      change: '+0.02',
-      vitalsStr: 'HR 90 • MAP 70 • SpO₂ 96% • 37.6°C',
-      labsStr: '1.6 mmol/L • 11.8 k/µL',
-    };
-  }
+  // Fallback for custom added patients based on their synthesized 24H history
+  const risk = lactate > 2.0 || map < 65 ? 0.085 : 0.015;
+  const tier: RiskTier = risk >= 0.10 ? 'CRITICAL' : risk >= 0.06 ? 'ELEVATED' : risk >= 0.03 ? 'WATCH' : 'LOW';
   return {
-    risk: 0.18,
-    tier: 'LOW' as RiskTier,
-    change: '-0.02',
-    vitalsStr: 'HR 76 • MAP 80 • SpO₂ 98% • 36.9°C',
-    labsStr: '1.2 mmol/L • 7.8 k/µL',
+    risk,
+    tier,
+    change: '+0.005',
+    vitalsStr,
+    labsStr,
   };
 };
 
@@ -611,9 +567,9 @@ export const DashboardView: React.FC = () => {
                       <div className="w-28">
                         <div className="flex justify-between items-baseline mb-1">
                           <span className="font-mono font-extrabold text-sm text-slate-900">
-                            {(risk * 100).toFixed(0)}%
+                            {(risk * 100).toFixed(1)}%
                           </span>
-                          <span className="text-[10px] text-slate-400">p={risk.toFixed(2)}</span>
+                          <span className="text-[10px] text-slate-400 font-mono">p={risk.toFixed(3)}</span>
                         </div>
                         <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
                           <div

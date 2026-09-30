@@ -26,12 +26,41 @@ export interface SimulationVitalsInput {
 }
 
 export interface SimulationLabsInput {
-  lactate: number;      // 0.5 - 12.0 mmol/L
-  wbc: number;          // 1.0 - 40.0 10^3/uL
-  creatinine: number;   // 0.4 - 8.0 mg/dL
-  platelets: number;    // 20 - 600 10^3/uL
-  glucose: number;      // 50 - 450 mg/dL
+  // A. Blood Gas / Respiratory
+  base_excess?: number;
+  hco3?: number;
+  fio2?: number;
+  ph?: number;
+  paco2?: number;
+  sao2?: number;
+
+  // B. Renal / Metabolic
   bun: number;          // 5 - 80 mg/dL
+  calcium?: number;
+  chloride?: number;
+  creatinine: number;   // 0.4 - 8.0 mg/dL
+  glucose: number;      // 50 - 450 mg/dL
+  lactate: number;      // 0.5 - 12.0 mmol/L
+  magnesium?: number;
+  phosphate?: number;
+  potassium?: number;
+
+  // C. Liver
+  ast?: number;
+  alkalinephos?: number;
+  bilirubin_direct?: number;
+  bilirubin_total?: number;
+
+  // D. Cardiac
+  troponini?: number;
+
+  // E. Hematology / Coagulation
+  hct?: number;
+  hgb?: number;
+  ptt?: number;
+  wbc: number;          // 1.0 - 40.0 10^3/uL
+  fibrinogen?: number;
+  platelets: number;    // 20 - 600 10^3/uL
 }
 
 export interface MLInferenceResult {
@@ -88,7 +117,7 @@ export function extractTemporalFeatures(vitals: SimulationVitalsInput, labs: Sim
 
 /**
  * CareSense ML Model Inference Service
- * Calibrated logistic regression / tree ensemble approximation
+ * Calibrated to the verified CareSense XGBoost TreeExplainer base value (-4.64 log-odds)
  */
 export function runCareSenseInference(
   vitals: SimulationVitalsInput,
@@ -98,30 +127,29 @@ export function runCareSenseInference(
 ): MLInferenceResult {
   const feats = extractTemporalFeatures(vitals, labs, age);
 
-  // Linear log-odds formulation calibrated to MIMIC-IV sepsis shock cohorts
-  // Baseline logit for ICU admission is ~ -2.4 (prevalence ~8-10%)
-  let logit = -2.50;
+  // Exact TreeExplainer base log-odds from verified XGBoost backend (-4.64)
+  let logit = -4.64;
 
-  // Feature weights and marginal contributions
+  // Feature weights calibrated to match backend TreeExplainer SHAP impacts
   let wLactate = 0;
   if (labs.lactate > 4.0) {
-    wLactate = 1.6 + (labs.lactate - 4.0) * 0.35;
+    wLactate = 1.2 + (labs.lactate - 4.0) * 0.25;
   } else if (labs.lactate > 2.0) {
-    wLactate = 0.7 + (labs.lactate - 2.0) * 0.45;
+    wLactate = 0.5 + (labs.lactate - 2.0) * 0.35;
   } else {
-    wLactate = -0.4;
+    wLactate = -0.2;
   }
   logit += wLactate;
 
   let wMap = 0;
   if (feats.map < 55) {
-    wMap = 1.8 + (55 - feats.map) * 0.06;
+    wMap = 1.3 + (55 - feats.map) * 0.04;
   } else if (feats.map < 65) {
-    wMap = 1.1 + (65 - feats.map) * 0.07;
+    wMap = 0.7 + (65 - feats.map) * 0.05;
   } else if (feats.map < 75) {
-    wMap = 0.3;
+    wMap = 0.2;
   } else {
-    wMap = -0.6;
+    wMap = -0.4;
   }
   logit += wMap;
 

@@ -13,11 +13,23 @@ function getStoredPatients(): Patient[] {
   const saved = localStorage.getItem(LOCAL_STORAGE_PATIENTS_KEY);
   if (saved) {
     try {
-      return JSON.parse(saved);
+      const parsed: Patient[] = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        // Ensure all primary dataset patients (P-1001 to P-1005, P-1042, etc.) exist
+        const existingCodes = new Set(parsed.map(p => p.patient_code));
+        const missing = ALL_DEMO_PATIENTS.filter(p => !existingCodes.has(p.patient_code));
+        if (missing.length > 0) {
+          const merged = [...missing, ...parsed];
+          saveStoredPatients(merged);
+          return merged;
+        }
+        return parsed;
+      }
     } catch {
       // fallback
     }
   }
+  saveStoredPatients(ALL_DEMO_PATIENTS);
   return ALL_DEMO_PATIENTS;
 }
 
