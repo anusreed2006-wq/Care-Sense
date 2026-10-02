@@ -19,6 +19,10 @@ import {
   Thermometer,
   Clock,
   ArrowRight,
+  Eye,
+  EyeOff,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -92,6 +96,13 @@ export const DashboardView: React.FC = () => {
   } = useCareSense();
 
   const [tierFilter, setTierFilter] = useState<string>('ALL');
+
+  // User state for KPI cards collapse/expand button:
+  // "add a button when user click it want to view in this form otherwise itwant to be like button"
+  const [isKpiCardsExpanded, setIsKpiCardsExpanded] = useState<boolean>(() => {
+    const saved = localStorage.getItem('caresense_kpi_cards_expanded');
+    return saved === 'true';
+  });
 
   // Smooth scroll helper to redirect the user to a specific section on the page
   const scrollToSection = (elementId: string, ringColorClass = 'ring-amber-500') => {
@@ -175,103 +186,182 @@ export const DashboardView: React.FC = () => {
         </div>
       </div>
 
-      {/* 5 KPI Metric Cards (Prompt Section 15) - With Direct Section Redirection */}
-      <div className="grid grid-cols-2 gap-3.5 sm:grid-cols-3 lg:grid-cols-5">
-        <MetricCard
-          id="kpi-monitored"
-          title="Patients Monitored"
-          value={stats.totalMonitored}
-          subtitle="All active ICU beds covered"
-          icon={Users}
-          trend={{ label: '100% coverage', direction: 'neutral' }}
-          onClick={() => {
-            setTierFilter('ALL');
-            scrollToSection('patient-census-table', 'ring-sky-500');
-          }}
-          isActive={tierFilter === 'ALL'}
-          actionLabel="Redirect to All Patients ↓"
-          actionIcon="down"
-        />
-        <MetricCard
-          id="kpi-high-risk"
-          title="High Sepsis Risk"
-          value={stats.highRiskCount}
-          subtitle="Risk probability ≥ 0.60"
-          variant="elevated"
-          icon={AlertTriangle}
-          badgeText="High Risk"
-          trend={{ label: '+1 last 4h', direction: 'up', positiveIsGood: false }}
-          onClick={() => {
-            setTierFilter('ELEVATED');
-            scrollToSection('patient-census-table', 'ring-amber-500');
-          }}
-          isActive={tierFilter === 'ELEVATED'}
-          actionLabel="Redirect to High Risk Cohort ↓"
-          actionIcon="down"
-          className="border-amber-300 bg-gradient-to-br from-amber-50/60 via-white to-amber-50/30 hover:border-amber-500 hover:shadow-lg hover:shadow-amber-500/15"
-        />
-        <MetricCard
-          id="kpi-critical"
-          title="Critical Patients"
-          value={stats.criticalCount}
-          subtitle="Imminent septic shock"
-          variant="critical"
-          icon={AlertOctagon}
-          badgeText="Critical"
-          trend={{ label: 'ICU-02, ICU-05', direction: 'up', positiveIsGood: false }}
-          onClick={() => {
-            setTierFilter('CRITICAL');
-            scrollToSection('patient-census-table', 'ring-rose-500');
-          }}
-          isActive={tierFilter === 'CRITICAL'}
-          actionLabel="Redirect to Critical Patients ↓"
-          actionIcon="down"
-          className="hover:border-rose-500 hover:shadow-lg hover:shadow-rose-500/15"
-        />
-        <MetricCard
-          id="kpi-active-alerts"
-          title="Active Alerts"
-          value={stats.activeAlertsCount}
-          subtitle="Requiring clinical bundle action"
-          variant="critical"
-          icon={Activity}
-          badgeText="Immediate"
-          trend={{ label: '2 unacknowledged', direction: 'up', positiveIsGood: false }}
-          onClick={() => {
-            const urgentTicker = document.getElementById('urgent-alert-ticker');
-            if (urgentTicker && featureToggles.showCriticalAlertBanner && activeAlerts.length > 0) {
-              scrollToSection('urgent-alert-ticker', 'ring-rose-500');
-            } else {
-              setActiveTab('alerts');
-            }
-          }}
-          actionLabel={
-            featureToggles.showCriticalAlertBanner && activeAlerts.length > 0
-              ? 'Redirect to Alert Ticker ↓'
-              : 'Redirect to Alerts View →'
-          }
-          actionIcon={
-            featureToggles.showCriticalAlertBanner && activeAlerts.length > 0
-              ? 'down'
-              : 'right'
-          }
-        />
-        <MetricCard
-          id="kpi-coverage"
-          title="Model Coverage"
-          value={stats.monitoringCoverage}
-          subtitle="Telemetry & ML active"
-          variant="success"
-          icon={ShieldCheck}
-          badgeText="ML Online"
-          trend={{ label: '42ms inference latency', direction: 'neutral' }}
-          onClick={() => {
-            setActiveTab('model-insights');
-          }}
-          actionLabel="Redirect to Model Architecture →"
-          actionIcon="right"
-        />
-      </div>
+      {/* 5 KPI Metric Cards (Prompt Section 15) - With Direct Section Redirection & Toggleable Button View Mode */}
+      {featureToggles.showKpiMetricCards !== false && (
+        !isKpiCardsExpanded ? (
+          /* Render as sleek button when collapsed ("otherwise it want to be like button") */
+          <div
+            id="kpi-cards-button-view"
+            className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-sky-200/90 bg-gradient-to-r from-sky-50/80 via-white to-indigo-50/50 p-4 shadow-xs transition hover:border-sky-300 hover:shadow-sm"
+          >
+            <div className="flex items-center gap-3.5">
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-sky-600 text-white shadow-xs shrink-0">
+                <Activity size={20} />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-bold text-slate-900">
+                    ICU Ward KPI Surveillance Metrics
+                  </span>
+                  <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-extrabold text-sky-700 uppercase tracking-wider">
+                    5 Active KPI Cards
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 mt-0.5">
+                  <span className="font-semibold text-slate-800">{stats.totalMonitored} Monitored</span>
+                  <span>•</span>
+                  <span className="font-semibold text-amber-700">{stats.highRiskCount} High Risk</span>
+                  <span>•</span>
+                  <span className="font-semibold text-rose-700">{stats.criticalCount} Critical</span>
+                  <span>•</span>
+                  <span className="font-semibold text-indigo-700">{stats.activeAlertsCount} Alerts</span>
+                  <span>•</span>
+                  <span className="text-slate-500">{stats.monitoringCoverage} Coverage</span>
+                </div>
+              </div>
+            </div>
+
+            <button
+              id="btn-expand-kpi-cards"
+              type="button"
+              onClick={() => {
+                setIsKpiCardsExpanded(true);
+                localStorage.setItem('caresense_kpi_cards_expanded', 'true');
+              }}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-sky-600 hover:bg-sky-500 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition active:scale-95 cursor-pointer shrink-0"
+              title="Click to view KPI metrics in full card form"
+            >
+              <Eye size={15} />
+              <span>View KPI Metric Cards</span>
+              <ChevronDown size={15} />
+            </button>
+          </div>
+        ) : (
+          /* Render full 5 cards with collapse button ("when user click it want to view in this form") */
+          <div className="space-y-2">
+            <div className="flex items-center justify-between px-1">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-black uppercase tracking-wider text-slate-500">
+                  ICU Ward KPI Surveillance Metrics (5 Cards)
+                </span>
+                <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700">
+                  Expanded View
+                </span>
+              </div>
+              <button
+                id="btn-collapse-kpi-cards"
+                type="button"
+                onClick={() => {
+                  setIsKpiCardsExpanded(false);
+                  localStorage.setItem('caresense_kpi_cards_expanded', 'false');
+                }}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 shadow-2xs transition cursor-pointer"
+                title="Collapse into button mode"
+              >
+                <ChevronUp size={13} />
+                <span>Collapse to Button</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3.5 sm:grid-cols-3 lg:grid-cols-5">
+              <MetricCard
+                id="kpi-monitored"
+                title="Patients Monitored"
+                value={stats.totalMonitored}
+                subtitle="All active ICU beds covered"
+                icon={Users}
+                trend={{ label: '100% coverage', direction: 'neutral' }}
+                onClick={() => {
+                  setTierFilter('ALL');
+                  scrollToSection('patient-census-table', 'ring-sky-500');
+                }}
+                isActive={tierFilter === 'ALL'}
+                actionLabel="Redirect to All Patients ↓"
+                actionIcon="down"
+              />
+              <MetricCard
+                id="kpi-high-risk"
+                title="High Sepsis Risk"
+                value={stats.highRiskCount}
+                subtitle="Risk probability ≥ 0.60"
+                variant="elevated"
+                icon={AlertTriangle}
+                badgeText="High Risk"
+                trend={{ label: '+1 last 4h', direction: 'up', positiveIsGood: false }}
+                onClick={() => {
+                  setTierFilter('ELEVATED');
+                  scrollToSection('patient-census-table', 'ring-amber-500');
+                }}
+                isActive={tierFilter === 'ELEVATED'}
+                actionLabel="Redirect to High Risk Cohort ↓"
+                actionIcon="down"
+                className="border-amber-300 bg-gradient-to-br from-amber-50/60 via-white to-amber-50/30 hover:border-amber-500 hover:shadow-lg hover:shadow-amber-500/15"
+              />
+              <MetricCard
+                id="kpi-critical"
+                title="Critical Patients"
+                value={stats.criticalCount}
+                subtitle="Imminent septic shock"
+                variant="critical"
+                icon={AlertOctagon}
+                badgeText="Critical"
+                trend={{ label: 'ICU-02, ICU-05', direction: 'up', positiveIsGood: false }}
+                onClick={() => {
+                  setTierFilter('CRITICAL');
+                  scrollToSection('patient-census-table', 'ring-rose-500');
+                }}
+                isActive={tierFilter === 'CRITICAL'}
+                actionLabel="Redirect to Critical Patients ↓"
+                actionIcon="down"
+                className="hover:border-rose-500 hover:shadow-lg hover:shadow-rose-500/15"
+              />
+              <MetricCard
+                id="kpi-active-alerts"
+                title="Active Alerts"
+                value={stats.activeAlertsCount}
+                subtitle="Requiring clinical bundle action"
+                variant="critical"
+                icon={Activity}
+                badgeText="Immediate"
+                trend={{ label: '2 unacknowledged', direction: 'up', positiveIsGood: false }}
+                onClick={() => {
+                  const urgentTicker = document.getElementById('urgent-alert-ticker');
+                  if (urgentTicker && featureToggles.showCriticalAlertBanner && activeAlerts.length > 0) {
+                    scrollToSection('urgent-alert-ticker', 'ring-rose-500');
+                  } else {
+                    setActiveTab('alerts');
+                  }
+                }}
+                actionLabel={
+                  featureToggles.showCriticalAlertBanner && activeAlerts.length > 0
+                    ? 'Redirect to Alert Ticker ↓'
+                    : 'Redirect to Alerts View →'
+                }
+                actionIcon={
+                  featureToggles.showCriticalAlertBanner && activeAlerts.length > 0
+                    ? 'down'
+                    : 'right'
+                }
+              />
+              <MetricCard
+                id="kpi-coverage"
+                title="Model Coverage"
+                value={stats.monitoringCoverage}
+                subtitle="Telemetry & ML active"
+                variant="success"
+                icon={ShieldCheck}
+                badgeText="ML Online"
+                trend={{ label: '42ms inference latency', direction: 'neutral' }}
+                onClick={() => {
+                  setActiveTab('model-insights');
+                }}
+                actionLabel="Redirect to Model Architecture →"
+                actionIcon="right"
+              />
+            </div>
+          </div>
+        )
+      )}
 
       {/* Urgent Alert Banner Ticker (if any active alerts) */}
       {featureToggles.showCriticalAlertBanner && activeAlerts.length > 0 && (
@@ -323,123 +413,132 @@ export const DashboardView: React.FC = () => {
       {featureToggles.showWardOverviewCharts && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Ward Average Trajectory Chart */}
-        <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-sm font-bold text-slate-900">
-                ICU Ward Aggregate Risk Trajectory (12-Hour)
-              </h2>
-              <p className="text-xs text-slate-500">
-                Mean predicted sepsis probability across all 24 monitored beds
-              </p>
+        {featureToggles.showWardTrajectoryChart !== false && (
+          <div className={`${featureToggles.showWardDistribution === false ? 'lg:col-span-3' : 'lg:col-span-2'} rounded-2xl border border-slate-200 bg-white p-5 shadow-xs`}>
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-sm font-bold text-slate-900">
+                  ICU Ward Aggregate Risk Trajectory (12-Hour)
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Mean predicted sepsis probability across all 24 monitored beds
+                </p>
+              </div>
+              <span className="text-xs font-semibold text-sky-700 bg-sky-50 px-2.5 py-1 rounded-full border border-sky-100">
+                Model Horizon: 6 Hours
+              </span>
             </div>
-            <span className="text-xs font-semibold text-sky-700 bg-sky-50 px-2.5 py-1 rounded-full border border-sky-100">
-              Model Horizon: 6 Hours
-            </span>
-          </div>
 
-          <div className="h-56 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={wardTrajectoryData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="wardRiskGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#0284c7" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#0284c7" stopOpacity={0.0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                <XAxis dataKey="time" tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                <YAxis
-                  domain={[0, 0.6]}
-                  tick={{ fontSize: 11, fill: '#64748b' }}
-                  axisLine={false}
-                  tickLine={false}
-                  tickFormatter={val => `${Math.round(val * 100)}%`}
-                />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#0f172a',
-                    border: 'none',
-                    borderRadius: '8px',
-                    color: '#fff',
-                    fontSize: '12px',
-                  }}
-                  formatter={(value: any) => [`${(Number(value) * 100).toFixed(1)}%`, 'Ward Avg Risk']}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="avgRisk"
-                  stroke="#0284c7"
-                  strokeWidth={2.5}
-                  fillOpacity={1}
-                  fill="url(#wardRiskGrad)"
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Ward Distribution Breakdown */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs flex flex-col justify-between">
-          <div>
-            <h2 className="text-sm font-bold text-slate-900 mb-1">Risk Tier Stratification</h2>
-            <p className="text-xs text-slate-500 mb-4">Current distribution of 24 ICU patients</p>
-
-            <div className="h-44 w-full">
+            <div className="h-56 w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={wardRiskDistribution} layout="vertical" margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-                  <XAxis type="number" hide />
-                  <YAxis dataKey="tier" type="category" tick={{ fontSize: 11, fill: '#475569' }} width={90} axisLine={false} tickLine={false} />
-                  <Tooltip
-                    contentStyle={{ backgroundColor: '#0f172a', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '11px' }}
-                    formatter={(val: any) => [`${val} patients`, 'Count']}
+                <AreaChart data={wardTrajectoryData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="wardRiskGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#0284c7" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#0284c7" stopOpacity={0.0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis dataKey="time" tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                  <YAxis
+                    domain={[0, 0.6]}
+                    tick={{ fontSize: 11, fill: '#64748b' }}
+                    axisLine={false}
+                    tickLine={false}
+                    tickFormatter={val => `${Math.round(val * 100)}%`}
                   />
-                  <Bar dataKey="count" radius={[0, 6, 6, 0]} barSize={16} />
-                </BarChart>
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#0f172a',
+                      border: 'none',
+                      borderRadius: '8px',
+                      color: '#fff',
+                      fontSize: '12px',
+                    }}
+                    formatter={(value: any) => [`${(Number(value) * 100).toFixed(1)}%`, 'Ward Avg Risk']}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="avgRisk"
+                    stroke="#0284c7"
+                    strokeWidth={2.5}
+                    fillOpacity={1}
+                    fill="url(#wardRiskGrad)"
+                  />
+                </AreaChart>
               </ResponsiveContainer>
             </div>
           </div>
+        )}
 
-          <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-[11px] font-bold text-slate-500">Quick Filter & Redirect:</span>
-              <button
-                onClick={() => {
-                  setTierFilter('CRITICAL');
-                  scrollToSection('patient-census-table', 'ring-rose-500');
-                }}
-                className="rounded-md bg-rose-50 hover:bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700 border border-rose-200 transition"
-              >
-                Critical (2) ↓
-              </button>
-              <button
-                onClick={() => {
-                  setTierFilter('ELEVATED');
-                  scrollToSection('patient-census-table', 'ring-amber-500');
-                }}
-                className="rounded-md bg-amber-50 hover:bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 border border-amber-200 transition"
-              >
-                Elevated (4) ↓
-              </button>
-              <button
-                onClick={() => {
-                  setTierFilter('WATCH');
-                  scrollToSection('patient-census-table', 'ring-amber-500');
-                }}
-                className="rounded-md bg-slate-100 hover:bg-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-700 border border-slate-200 transition"
-              >
-                Watch (6) ↓
-              </button>
+        {/* Ward Distribution Breakdown */}
+        {featureToggles.showWardDistribution !== false && (
+          <div className={`rounded-2xl border border-slate-200 bg-white p-5 shadow-xs flex flex-col justify-between ${
+            featureToggles.showWardTrajectoryChart === false ? 'lg:col-span-3' : ''
+          }`}>
+            <div>
+              <h2 className="text-sm font-bold text-slate-900 mb-1">Risk Tier Stratification</h2>
+              <p className="text-xs text-slate-500 mb-4">Current distribution of 24 ICU patients</p>
+
+              <div className="h-44 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={wardRiskDistribution} layout="vertical" margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                    <XAxis type="number" hide />
+                    <YAxis dataKey="tier" type="category" tick={{ fontSize: 11, fill: '#475569' }} width={90} axisLine={false} tickLine={false} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#0f172a', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '11px' }}
+                      formatter={(val: any) => [`${val} patients`, 'Count']}
+                    />
+                    <Bar dataKey="count" radius={[0, 6, 6, 0]} barSize={16} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             </div>
-            <button
-              onClick={() => setActiveTab('analytics')}
-              className="font-bold text-sky-600 hover:text-sky-700 flex items-center gap-1 text-xs"
-            >
-              <span>Full Analytics</span>
-              <span>→</span>
-            </button>
+
+            {/* Quick Filter & Redirect Bar (Targeted by CSS Selector: div:nth-of-type(4) > div:nth-of-type(2) > div:nth-of-type(2)) */}
+            {featureToggles.showWardQuickFilter !== false && (
+              <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[11px] font-bold text-slate-500">Quick Filter & Redirect:</span>
+                  <button
+                    onClick={() => {
+                      setTierFilter('CRITICAL');
+                      scrollToSection('patient-census-table', 'ring-rose-500');
+                    }}
+                    className="rounded-md bg-rose-50 hover:bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700 border border-rose-200 transition"
+                  >
+                    Critical (2) ↓
+                  </button>
+                  <button
+                    onClick={() => {
+                      setTierFilter('ELEVATED');
+                      scrollToSection('patient-census-table', 'ring-amber-500');
+                    }}
+                    className="rounded-md bg-amber-50 hover:bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 border border-amber-200 transition"
+                  >
+                    Elevated (4) ↓
+                  </button>
+                  <button
+                    onClick={() => {
+                      setTierFilter('WATCH');
+                      scrollToSection('patient-census-table', 'ring-amber-500');
+                    }}
+                    className="rounded-md bg-slate-100 hover:bg-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-700 border border-slate-200 transition"
+                  >
+                    Watch (6) ↓
+                  </button>
+                </div>
+                <button
+                  onClick={() => setActiveTab('analytics')}
+                  className="font-bold text-sky-600 hover:text-sky-700 flex items-center gap-1 text-xs"
+                >
+                  <span>Full Analytics</span>
+                  <span>→</span>
+                </button>
+              </div>
+            )}
           </div>
-        </div>
+        )}
       </div>
       )}
 

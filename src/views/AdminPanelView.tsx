@@ -27,6 +27,10 @@ import {
   Heart,
   Droplet,
   Search,
+  Cpu,
+  Key,
+  RefreshCw,
+  Zap,
 } from 'lucide-react';
 
 export const AdminPanelView: React.FC = () => {
@@ -34,6 +38,8 @@ export const AdminPanelView: React.FC = () => {
     isAdminAuthenticated,
     loginAdmin,
     logoutAdmin,
+    isAdminUnlocked,
+    lockAdminPanel,
     featureToggles,
     setFeatureToggle,
     resetFeatureToggles,
@@ -45,6 +51,11 @@ export const AdminPanelView: React.FC = () => {
     addToast,
     setActiveTab,
     selectPatientAndNavigate,
+    ensembleConfig,
+    updateEnsembleConfig,
+    toggleEnsemble,
+    setEnsembleWeights,
+    testEnsembleKey,
   } = useCareSense();
 
   // Login Form State
@@ -54,7 +65,27 @@ export const AdminPanelView: React.FC = () => {
   const [loginError, setLoginError] = useState('');
 
   // Admin Active Tab
-  const [adminTab, setAdminTab] = useState<'toggles' | 'patients' | 'clinical-data'>('toggles');
+  const [adminTab, setAdminTab] = useState<'toggles' | 'engine-integration' | 'patients' | 'clinical-data'>('toggles');
+
+  // CareSense Cognitive Engine Integration State
+  const [apiKeyInput, setApiKeyInput] = useState<string>(ensembleConfig?.apiKey || '');
+  const [showApiKey, setShowApiKey] = useState<boolean>(false);
+  const [isTestingKey, setIsTestingKey] = useState<boolean>(false);
+  const [keyTestFeedback, setKeyTestFeedback] = useState<{
+    status: 'idle' | 'success' | 'error';
+    message: string;
+    latencyMs?: number;
+    sampleProb?: number;
+  }>({
+    status: ensembleConfig?.lastTestStatus || 'idle',
+    message: ensembleConfig?.lastTestMessage || '',
+    latencyMs: ensembleConfig?.lastTestLatencyMs,
+  });
+  const [apiWeightInput, setApiWeightInput] = useState<number>(ensembleConfig?.apiWeight ?? 70);
+
+  // Live calculation test sandbox in Admin Panel
+  const [testSimCognitiveProb, setTestSimCognitiveProb] = useState<number>(78);
+  const [testSimBaseProb, setTestSimBaseProb] = useState<number>(62);
 
   // Edit Patient State
   const [editingPatient, setEditingPatient] = useState<Patient | null>(null);
@@ -300,15 +331,31 @@ export const AdminPanelView: React.FC = () => {
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => setActiveTab('dashboard')}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800/80 px-3.5 py-2 text-xs font-bold text-slate-200 hover:bg-slate-700 transition shadow-2xs"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800/80 px-3.5 py-2 text-xs font-bold text-slate-200 hover:bg-slate-700 transition shadow-2xs cursor-pointer"
           >
             <span>Main App</span>
             <ArrowRight size={13} />
           </button>
 
           <button
+            onClick={() => {
+              lockAdminPanel();
+              addToast({
+                type: 'info',
+                title: 'Admin Panel Locked & Hidden',
+                description: 'Admin shortcuts are now completely hidden. Tap clinician profile 5 times to reveal again.',
+              });
+            }}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3.5 py-2 text-xs font-bold text-amber-300 hover:bg-amber-500/20 transition shadow-2xs cursor-pointer"
+            title="Lock and hide Admin Panel from all shortcuts and menus"
+          >
+            <Lock size={13} />
+            <span>Lock & Hide Panel</span>
+          </button>
+
+          <button
             onClick={resetFeatureToggles}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800/80 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-slate-700 transition shadow-2xs"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800/80 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-slate-700 transition shadow-2xs cursor-pointer"
             title="Reset all display toggles to factory default"
           >
             <RotateCcw size={13} />
@@ -329,7 +376,7 @@ export const AdminPanelView: React.FC = () => {
       </div>
 
       {/* Admin Sub-navigation Tabs */}
-      <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-2">
         <button
           onClick={() => setAdminTab('toggles')}
           className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition ${
@@ -340,6 +387,25 @@ export const AdminPanelView: React.FC = () => {
         >
           <Sliders size={14} />
           <span>App Display & Visibility Toggles</span>
+        </button>
+
+        <button
+          onClick={() => setAdminTab('engine-integration')}
+          className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition ${
+            adminTab === 'engine-integration'
+              ? 'bg-indigo-600 text-white shadow-xs'
+              : 'bg-white text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          <Cpu size={14} />
+          <span>Cognitive Engine & Dual-Pipeline Governance</span>
+          <span className={`ml-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold ${
+            ensembleConfig?.enabled && ensembleConfig?.apiKey
+              ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+              : 'bg-slate-100 text-slate-500 border border-slate-200'
+          }`}>
+            {ensembleConfig?.enabled && ensembleConfig?.apiKey ? `ON (${ensembleConfig.apiWeight}/${ensembleConfig.backendWeight})` : 'OFF'}
+          </span>
         </button>
 
         <button
@@ -381,6 +447,67 @@ export const AdminPanelView: React.FC = () => {
                 <p className="text-xs text-slate-500 mt-0.5">
                   Use these toggle switches to customize exactly what sections, cards, and modules appear to clinicians in the main app. Changes take effect immediately.
                 </p>
+              </div>
+            </div>
+
+            {/* Master Featured Card: CareSense Cognitive Engine Dual-Pipeline Integration */}
+            <div className="mb-6 p-4 rounded-xl border border-indigo-200 bg-gradient-to-r from-indigo-50/70 via-white to-sky-50/70">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 text-white shrink-0 shadow-xs">
+                    <Cpu size={18} />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <strong className="text-xs font-black text-slate-900">
+                        CareSense Cognitive Deep Inference Pipeline
+                      </strong>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        ensembleConfig?.enabled
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                          : 'bg-slate-200 text-slate-700'
+                      }`}>
+                        {ensembleConfig?.enabled ? 'Active Integration' : 'Disabled (Base XGBoost Only)'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-600 mt-0.5">
+                      {ensembleConfig?.enabled
+                        ? `Consensus model active: ${ensembleConfig.apiWeight}% Cognitive Pipeline + ${ensembleConfig.backendWeight}% CareSense Base XGBoost.`
+                        : 'Currently disabled. System runs 100% on the CareSense Base XGBoost model.'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 self-end sm:self-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = toggleEnsemble();
+                      addToast({
+                        type: next ? 'success' : 'info',
+                        title: next ? 'Cognitive Integration Activated' : 'Cognitive Integration Deactivated',
+                        description: next
+                          ? `Consensus blending active (${ensembleConfig.apiWeight}% / ${ensembleConfig.backendWeight}%).`
+                          : 'System reverted to 100% CareSense Base XGBoost.',
+                      });
+                    }}
+                    className={`flex items-center gap-1 rounded-full p-1 w-12 transition cursor-pointer ${
+                      ensembleConfig?.enabled ? 'bg-indigo-600 justify-end' : 'bg-slate-300 justify-start'
+                    }`}
+                    title="Toggle Cognitive Pipeline Integration ON/OFF"
+                  >
+                    <div className="h-4 w-4 rounded-full bg-white shadow-xs" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setAdminTab('engine-integration')}
+                    className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700 transition shadow-xs flex items-center gap-1 cursor-pointer"
+                  >
+                    <span>Configure Key & Weights</span>
+                    <ArrowRight size={12} />
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -643,10 +770,137 @@ export const AdminPanelView: React.FC = () => {
               </div>
             </div>
 
-            {/* Section 3: Navigation Menu Modules */}
+            {/* Section 3: Dashboard & Ward Surveillance Overview Components */}
+            <div className="space-y-4 mt-8 pt-6 border-t border-slate-100">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500">
+                    3. Dashboard & Ward Surveillance Overview Components
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Toggle individual clinical cards, trajectory charts, and redirect controls on the main dashboard.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Toggle: Quick Filter & Redirect Bar (Targeted by CSS Selector) */}
+                <div className="flex items-center justify-between p-4 rounded-xl border border-indigo-200 bg-indigo-50/40 hover:bg-indigo-50/60 transition">
+                  <div>
+                    <strong className="text-xs font-bold text-indigo-950 block flex items-center gap-1.5">
+                      <Sparkles size={14} className="text-indigo-600" />
+                      <span>Risk Tier Stratification Quick Filter Bar</span>
+                    </strong>
+                    <span className="text-[11px] text-indigo-900/80">
+                      Bottom bar with Critical (2), Elevated (4), Watch (6) quick filter buttons and Full Analytics link
+                    </span>
+                  </div>
+                  <button
+                    id="btn-toggle-ward-quick-filter"
+                    onClick={() => setFeatureToggle('showWardQuickFilter', featureToggles.showWardQuickFilter === false ? true : false)}
+                    className={`flex items-center gap-1 rounded-full p-1 w-12 transition cursor-pointer ${
+                      featureToggles.showWardQuickFilter !== false ? 'bg-indigo-600 justify-end' : 'bg-slate-300 justify-start'
+                    }`}
+                    title="Toggle Risk Tier Stratification Quick Filter Bar"
+                  >
+                    <div className="h-4 w-4 rounded-full bg-white shadow-xs" />
+                  </button>
+                </div>
+
+                {/* Toggle: Risk Tier Stratification Card */}
+                <div className="flex items-center justify-between p-4 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-slate-50 transition">
+                  <div>
+                    <strong className="text-xs font-bold text-slate-900 block">
+                      Risk Tier Stratification Card
+                    </strong>
+                    <span className="text-[11px] text-slate-500">
+                      Distribution breakdown of 24 ICU patients across Low, Watch, Elevated, and Critical
+                    </span>
+                  </div>
+                  <button
+                    id="btn-toggle-ward-distribution"
+                    onClick={() => setFeatureToggle('showWardDistribution', featureToggles.showWardDistribution === false ? true : false)}
+                    className={`flex items-center gap-1 rounded-full p-1 w-12 transition cursor-pointer ${
+                      featureToggles.showWardDistribution !== false ? 'bg-indigo-600 justify-end' : 'bg-slate-300 justify-start'
+                    }`}
+                    title="Toggle Risk Tier Stratification Card"
+                  >
+                    <div className="h-4 w-4 rounded-full bg-white shadow-xs" />
+                  </button>
+                </div>
+
+                {/* Toggle: Ward Aggregate Risk Trajectory Chart */}
+                <div className="flex items-center justify-between p-4 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-slate-50 transition">
+                  <div>
+                    <strong className="text-xs font-bold text-slate-900 block">
+                      ICU Ward Aggregate Risk Trajectory Chart (12-Hour)
+                    </strong>
+                    <span className="text-[11px] text-slate-500">
+                      Mean predicted sepsis risk area chart across all monitored ward beds
+                    </span>
+                  </div>
+                  <button
+                    id="btn-toggle-ward-trajectory"
+                    onClick={() => setFeatureToggle('showWardTrajectoryChart', featureToggles.showWardTrajectoryChart === false ? true : false)}
+                    className={`flex items-center gap-1 rounded-full p-1 w-12 transition cursor-pointer ${
+                      featureToggles.showWardTrajectoryChart !== false ? 'bg-indigo-600 justify-end' : 'bg-slate-300 justify-start'
+                    }`}
+                    title="Toggle Ward Trajectory Chart"
+                  >
+                    <div className="h-4 w-4 rounded-full bg-white shadow-xs" />
+                  </button>
+                </div>
+
+                {/* Toggle: Ward Overview Charts Row */}
+                <div className="flex items-center justify-between p-4 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-slate-50 transition">
+                  <div>
+                    <strong className="text-xs font-bold text-slate-900 block">
+                      Ward Overview & Trends Secondary Row
+                    </strong>
+                    <span className="text-[11px] text-slate-500">
+                      Entire secondary grid container (Trajectory Chart + Stratification Breakdown)
+                    </span>
+                  </div>
+                  <button
+                    id="btn-toggle-ward-overview"
+                    onClick={() => setFeatureToggle('showWardOverviewCharts', !featureToggles.showWardOverviewCharts)}
+                    className={`flex items-center gap-1 rounded-full p-1 w-12 transition cursor-pointer ${
+                      featureToggles.showWardOverviewCharts ? 'bg-indigo-600 justify-end' : 'bg-slate-300 justify-start'
+                    }`}
+                    title="Toggle Ward Overview Charts Row"
+                  >
+                    <div className="h-4 w-4 rounded-full bg-white shadow-xs" />
+                  </button>
+                </div>
+
+                {/* Toggle: 5 KPI Metric Cards */}
+                <div className="flex items-center justify-between p-4 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-slate-50 transition md:col-span-2">
+                  <div>
+                    <strong className="text-xs font-bold text-slate-900 block">
+                      Ward Clinical KPI Metric Cards (Top 5 Cards / Button Mode)
+                    </strong>
+                    <span className="text-[11px] text-slate-500">
+                      Patients Monitored, High Risk, Critical, Active Alerts, and Coverage cards with interactive button toggle
+                    </span>
+                  </div>
+                  <button
+                    id="btn-toggle-kpi-cards"
+                    onClick={() => setFeatureToggle('showKpiMetricCards', featureToggles.showKpiMetricCards === false ? true : false)}
+                    className={`flex items-center gap-1 rounded-full p-1 w-12 transition cursor-pointer ${
+                      featureToggles.showKpiMetricCards !== false ? 'bg-indigo-600 justify-end' : 'bg-slate-300 justify-start'
+                    }`}
+                    title="Toggle Ward Clinical KPI Cards"
+                  >
+                    <div className="h-4 w-4 rounded-full bg-white shadow-xs" />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Section 4: Navigation Menu Modules */}
             <div className="space-y-4 mt-8 pt-6 border-t border-slate-100">
               <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500">
-                3. Sidebar Navigation Module Toggles
+                4. Sidebar Navigation Module Toggles
               </h3>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -714,6 +968,479 @@ export const AdminPanelView: React.FC = () => {
                   </button>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------- */}
+      {/* TAB: CARESENSE COGNITIVE ENGINE & DUAL-PIPELINE GOVERNANCE    */}
+      {/* ------------------------------------------------------------- */}
+      {adminTab === 'engine-integration' && (
+        <div className="space-y-6">
+          <div className="rounded-2xl border border-indigo-200 bg-white p-6 shadow-xs">
+            {/* Header with Title and Master Pipeline Switch */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-slate-100">
+              <div className="flex items-start gap-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-sm shrink-0">
+                  <Cpu size={24} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-base font-black text-slate-900 tracking-tight">
+                      CareSense Cognitive Engine & Dual-Pipeline Governance
+                    </h2>
+                    <span className={`rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+                      ensembleConfig.enabled && ensembleConfig.apiKey
+                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                        : 'bg-slate-100 text-slate-600 border border-slate-200'
+                    }`}>
+                      {ensembleConfig.enabled && ensembleConfig.apiKey ? 'Ensemble Active' : 'Base XGBoost Only'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Configure the CareSense deep cognitive reasoning pipeline and govern consensus probability blending with the CareSense base XGBoost model.
+                  </p>
+                </div>
+              </div>
+
+              {/* Master ON / OFF Switch */}
+              <div className="flex items-center gap-3 bg-slate-50 p-3 rounded-2xl border border-slate-200 shrink-0">
+                <div className="text-right">
+                  <span className="text-[10px] uppercase font-extrabold text-slate-400 block tracking-wider">
+                    Pipeline Switch
+                  </span>
+                  <span className={`text-xs font-black ${ensembleConfig.enabled ? 'text-indigo-600' : 'text-slate-500'}`}>
+                    {ensembleConfig.enabled ? 'INTEGRATION ON' : 'INTEGRATION OFF'}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = toggleEnsemble();
+                    addToast({
+                      type: next ? 'success' : 'info',
+                      title: next ? 'CareSense Cognitive Integration Activated' : 'CareSense Cognitive Integration Deactivated',
+                      description: next
+                        ? `Consensus model active (${ensembleConfig.apiWeight}% Cognitive Pipeline / ${ensembleConfig.backendWeight}% Base XGBoost).`
+                        : 'System operates exclusively on CareSense Base XGBoost.',
+                    });
+                  }}
+                  className={`flex items-center gap-1 rounded-full p-1 w-14 h-7 transition-all duration-300 cursor-pointer shadow-inner ${
+                    ensembleConfig.enabled ? 'bg-indigo-600 justify-end' : 'bg-slate-300 justify-start'
+                  }`}
+                  title="Turn Integration ON or OFF"
+                >
+                  <div className="h-5 w-5 rounded-full bg-white shadow-md transform transition" />
+                </button>
+              </div>
+            </div>
+
+            {/* Status Information Box */}
+            <div className={`mt-4 rounded-xl p-3.5 text-xs flex items-start gap-3 border ${
+              ensembleConfig.enabled
+                ? 'bg-emerald-50/70 border-emerald-200 text-emerald-950'
+                : 'bg-slate-50 border-slate-200 text-slate-700'
+            }`}>
+              <CheckCircle2 size={18} className={`shrink-0 mt-0.5 ${ensembleConfig.enabled ? 'text-emerald-600' : 'text-slate-400'}`} />
+              <div>
+                <p className="font-bold">
+                  {ensembleConfig.enabled
+                    ? 'Dual-Engine Consensus Integration is Active'
+                    : 'Integration is Turned Off (Native CareSense Backend Active)'}
+                </p>
+                <p className="text-[11px] mt-0.5 text-slate-600 leading-relaxed">
+                  {ensembleConfig.enabled
+                    ? `Patient telemetry (8 vitals & 26 laboratories) is dispatched to the cognitive inference engine and blended with CareSense Base XGBoost backend results at a ratio of ${ensembleConfig.apiWeight}% to ${ensembleConfig.backendWeight}%.`
+                    : 'The dashboard runs 100% on the authentic CareSense FastAPI XGBoost backend without any secondary engine calculations.'}
+                </p>
+              </div>
+            </div>
+
+            {/* -------------------------------------------------------- */}
+            {/* 1. API KEY CONFIGURATION */}
+            {/* -------------------------------------------------------- */}
+            <div className="mt-6 pt-6 border-t border-slate-100 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+                    <Key size={14} className="text-indigo-600" />
+                    <span>CareSense Cognitive Pipeline API Key</span>
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    API key is entered only in this Admin Panel. It is securely persisted and never exposed to general application users.
+                  </p>
+                </div>
+                {ensembleConfig.apiKey && (
+                  <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-mono font-bold text-emerald-700 border border-emerald-200">
+                    <CheckCircle2 size={11} />
+                    <span>Key Configured</span>
+                  </span>
+                )}
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-2">
+                <div className="relative flex-1">
+                  <input
+                    type={showApiKey ? 'text' : 'password'}
+                    value={apiKeyInput}
+                    onChange={e => setApiKeyInput(e.target.value)}
+                    placeholder="Enter CareSense Cognitive Engine API Key..."
+                    className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-xs font-mono font-bold text-slate-900 focus:border-indigo-600 focus:outline-hidden pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowApiKey(!showApiKey)}
+                    className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                    title={showApiKey ? 'Hide Key' : 'Show Key'}
+                  >
+                    {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateEnsembleConfig({ apiKey: apiKeyInput.trim() });
+                      addToast({
+                        type: 'success',
+                        title: 'API Key Saved',
+                        description: 'CareSense Cognitive Engine Key persisted securely.',
+                      });
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 transition shadow-xs shrink-0 cursor-pointer"
+                  >
+                    <Save size={13} />
+                    <span>Save Key</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isTestingKey}
+                    onClick={async () => {
+                      setIsTestingKey(true);
+                      setKeyTestFeedback({ status: 'idle', message: 'Testing engine connectivity...' });
+                      try {
+                        const res = await testEnsembleKey(apiKeyInput.trim());
+                        setKeyTestFeedback({
+                          status: res.success ? 'success' : 'error',
+                          message: res.message,
+                          latencyMs: res.latencyMs,
+                          sampleProb: res.sampleProbability,
+                        });
+                        addToast({
+                          type: res.success ? 'success' : 'critical',
+                          title: res.success ? 'Engine Handshake Verified' : 'Engine Connection Failed',
+                          description: res.message,
+                        });
+                      } catch (err: any) {
+                        setKeyTestFeedback({
+                          status: 'error',
+                          message: err?.message || 'Handshake failed',
+                        });
+                      } finally {
+                        setIsTestingKey(false);
+                      }
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition shadow-2xs shrink-0 disabled:opacity-50 cursor-pointer"
+                  >
+                    <RefreshCw size={13} className={isTestingKey ? 'animate-spin text-indigo-600' : 'text-slate-500'} />
+                    <span>{isTestingKey ? 'Verifying...' : 'Test Connection'}</span>
+                  </button>
+
+                  {apiKeyInput && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setApiKeyInput('');
+                        updateEnsembleConfig({ apiKey: '' });
+                        setKeyTestFeedback({ status: 'idle', message: '' });
+                        addToast({
+                          type: 'info',
+                          title: 'API Key Cleared',
+                          description: 'CareSense Cognitive Engine key removed.',
+                        });
+                      }}
+                      className="rounded-xl border border-rose-200 bg-rose-50 p-2.5 text-rose-700 hover:bg-rose-100 transition shrink-0 cursor-pointer"
+                      title="Clear API Key"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Handshake Diagnostic Feedback */}
+              {keyTestFeedback.message && (
+                <div className={`p-3 rounded-xl text-xs flex items-center justify-between border ${
+                  keyTestFeedback.status === 'success'
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                    : keyTestFeedback.status === 'error'
+                    ? 'bg-rose-50 border-rose-200 text-rose-900'
+                    : 'bg-slate-50 border-slate-200 text-slate-700'
+                }`}>
+                  <div className="flex items-center gap-2">
+                    {keyTestFeedback.status === 'success' ? (
+                      <CheckCircle2 size={15} className="text-emerald-600 shrink-0" />
+                    ) : (
+                      <AlertTriangle size={15} className="text-rose-600 shrink-0" />
+                    )}
+                    <span className="font-semibold">{keyTestFeedback.message}</span>
+                  </div>
+                  {keyTestFeedback.latencyMs !== undefined && (
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/80 border border-slate-200 font-bold shrink-0">
+                      {keyTestFeedback.latencyMs}ms
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* -------------------------------------------------------- */}
+            {/* 2. PROBABILITY COMBINATION WEIGHT EDITOR (70% / 30%) */}
+            {/* -------------------------------------------------------- */}
+            <div className="mt-8 pt-6 border-t border-slate-100 space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+                    <Sliders size={14} className="text-indigo-600" />
+                    <span>Consensus Probability Weight Combination Editor</span>
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Configure the exact combination percentages for the final sepsis prediction. Changes take effect across the entire application immediately.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 font-mono text-xs">
+                  <span className="font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg px-2.5 py-1">
+                    {apiWeightInput}% Cognitive Engine
+                  </span>
+                  <span className="text-slate-400 font-bold">+</span>
+                  <span className="font-bold text-slate-700 bg-slate-100 border border-slate-200 rounded-lg px-2.5 py-1">
+                    {100 - apiWeightInput}% Base XGBoost
+                  </span>
+                </div>
+              </div>
+
+              {/* Slider Control Card */}
+              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/70 space-y-4">
+                <div className="flex justify-between items-center text-xs font-bold">
+                  <span className="text-indigo-900 flex items-center gap-1">
+                    <Sparkles size={13} className="text-indigo-600" />
+                    <span>Cognitive Engine Result Weight: {apiWeightInput}%</span>
+                  </span>
+                  <span className="text-slate-700 flex items-center gap-1">
+                    <Cpu size={13} className="text-slate-500" />
+                    <span>CareSense Base XGBoost Weight: {100 - apiWeightInput}%</span>
+                  </span>
+                </div>
+
+                {/* Range Input */}
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={apiWeightInput}
+                  onChange={e => {
+                    const val = Number(e.target.value);
+                    setApiWeightInput(val);
+                    setEnsembleWeights(val);
+                  }}
+                  className="w-full accent-indigo-600 cursor-pointer h-2"
+                />
+
+                {/* Visual Ratio Progress Bar */}
+                <div className="space-y-1">
+                  <div className="h-3.5 w-full rounded-full bg-slate-200 overflow-hidden flex">
+                    <div
+                      className="h-full bg-indigo-600 transition-all duration-150 flex items-center justify-center text-[9px] text-white font-mono font-bold"
+                      style={{ width: `${apiWeightInput}%` }}
+                      title={`Cognitive Engine: ${apiWeightInput}%`}
+                    >
+                      {apiWeightInput >= 15 ? `${apiWeightInput}%` : ''}
+                    </div>
+                    <div
+                      className="h-full bg-slate-700 transition-all duration-150 flex items-center justify-center text-[9px] text-white font-mono font-bold"
+                      style={{ width: `${100 - apiWeightInput}%` }}
+                      title={`CareSense Base XGBoost: ${100 - apiWeightInput}%`}
+                    >
+                      {100 - apiWeightInput >= 15 ? `${100 - apiWeightInput}%` : ''}
+                    </div>
+                  </div>
+                  <div className="flex justify-between text-[10px] font-mono text-slate-500">
+                    <span>0% Cognitive</span>
+                    <span className="font-bold text-indigo-700">Default: 70% Cognitive / 30% Base</span>
+                    <span>100% Cognitive</span>
+                  </div>
+                </div>
+
+                {/* Quick Presets */}
+                <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-200">
+                  <span className="text-[11px] font-bold text-slate-500 mr-1">Ensemble Presets:</span>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setApiWeightInput(70);
+                      setEnsembleWeights(70);
+                      addToast({ type: 'success', title: 'Weights Updated', description: 'Set to 70% Cognitive / 30% Base XGBoost.' });
+                    }}
+                    className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition border cursor-pointer ${
+                      apiWeightInput === 70
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    70% / 30% (Standard Specification)
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setApiWeightInput(50);
+                      setEnsembleWeights(50);
+                      addToast({ type: 'success', title: 'Weights Updated', description: 'Set to 50% Cognitive / 50% Base XGBoost.' });
+                    }}
+                    className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition border cursor-pointer ${
+                      apiWeightInput === 50
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    50% / 50% (Balanced Dual-Engine)
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setApiWeightInput(80);
+                      setEnsembleWeights(80);
+                      addToast({ type: 'success', title: 'Weights Updated', description: 'Set to 80% Cognitive / 20% Base XGBoost.' });
+                    }}
+                    className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition border cursor-pointer ${
+                      apiWeightInput === 80
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    80% / 20% (High Cognitive Weight)
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setApiWeightInput(30);
+                      setEnsembleWeights(30);
+                      addToast({ type: 'success', title: 'Weights Updated', description: 'Set to 30% Cognitive / 70% Base XGBoost.' });
+                    }}
+                    className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition border cursor-pointer ${
+                      apiWeightInput === 30
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    30% / 70% (Base XGBoost Prioritized)
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* -------------------------------------------------------- */}
+            {/* 3. MATHEMATICAL CALCULATION SANDBOX / LIVE VERIFICATION */}
+            {/* -------------------------------------------------------- */}
+            <div className="mt-8 pt-6 border-t border-slate-100 space-y-4">
+              <h3 className="text-xs font-black uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+                <Zap size={14} className="text-amber-500" />
+                <span>Live Blended Consensus Sandbox & Mathematical Verification</span>
+              </h3>
+              <p className="text-[11px] text-slate-500">
+                Interactive simulator demonstrating exactly how probabilities are blended in real time across the CareSense platform.
+              </p>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 rounded-xl border border-indigo-100 bg-gradient-to-br from-indigo-50/40 via-white to-slate-50">
+                {/* Input A: Cognitive Probability */}
+                <div className="p-3 rounded-lg bg-white border border-indigo-100 space-y-2">
+                  <div className="flex justify-between items-center text-xs font-bold text-indigo-950">
+                    <span>Cognitive Engine Input</span>
+                    <span className="font-mono text-indigo-600">{testSimCognitiveProb}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={testSimCognitiveProb}
+                    onChange={e => setTestSimCognitiveProb(Number(e.target.value))}
+                    className="w-full accent-indigo-600 cursor-pointer"
+                  />
+                  <div className="text-[11px] font-mono text-slate-500">
+                    Weighted: {(testSimCognitiveProb * (apiWeightInput / 100)).toFixed(1)}% (× {apiWeightInput / 100})
+                  </div>
+                </div>
+
+                {/* Input B: CareSense Base XGBoost */}
+                <div className="p-3 rounded-lg bg-white border border-slate-200 space-y-2">
+                  <div className="flex justify-between items-center text-xs font-bold text-slate-900">
+                    <span>CareSense Base Backend Input</span>
+                    <span className="font-mono text-slate-700">{testSimBaseProb}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={testSimBaseProb}
+                    onChange={e => setTestSimBaseProb(Number(e.target.value))}
+                    className="w-full accent-slate-700 cursor-pointer"
+                  />
+                  <div className="text-[11px] font-mono text-slate-500">
+                    Weighted: {(testSimBaseProb * ((100 - apiWeightInput) / 100)).toFixed(1)}% (× {(100 - apiWeightInput) / 100})
+                  </div>
+                </div>
+
+                {/* Output: Blended Probability */}
+                {(() => {
+                  const blendedVal = (testSimCognitiveProb * (apiWeightInput / 100)) + (testSimBaseProb * ((100 - apiWeightInput) / 100));
+                  const tier = blendedVal >= 80 ? 'CRITICAL' : blendedVal >= 60 ? 'ELEVATED' : blendedVal >= 30 ? 'WATCH' : 'LOW';
+                  return (
+                    <div className="p-3 rounded-lg bg-white border border-indigo-200 space-y-1.5 flex flex-col justify-between shadow-2xs">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[11px] font-extrabold uppercase text-slate-400">Blended Consensus</span>
+                        <RiskBadge tier={tier} size="sm" />
+                      </div>
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="text-3xl font-black font-mono text-slate-900">
+                          {blendedVal.toFixed(1)}%
+                        </span>
+                        <span className="text-xs text-slate-400 font-mono">
+                          ({(blendedVal / 100).toFixed(3)})
+                        </span>
+                      </div>
+                      <p className="text-[10px] font-mono text-slate-500">
+                        = ({apiWeightInput}% × {testSimCognitiveProb}%) + ({100 - apiWeightInput}% × {testSimBaseProb}%)
+                      </p>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+
+            {/* -------------------------------------------------------- */}
+            {/* 4. CLINICAL BRANDING ASSURANCE */}
+            {/* -------------------------------------------------------- */}
+            <div className="mt-8 pt-4 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-500">
+              <div className="flex items-center gap-2">
+                <ShieldCheck size={16} className="text-emerald-600 shrink-0" />
+                <span className="font-semibold text-slate-700">
+                  Unified CareSense Branding Assurance:
+                </span>
+                <span>
+                  All frontend views, cards, and reports strictly display CareSense branding. No external keys or names are exposed.
+                </span>
+              </div>
+              <span className="font-mono text-[10px] text-slate-400">
+                CareSense Ensemble v2.0
+              </span>
             </div>
           </div>
         </div>

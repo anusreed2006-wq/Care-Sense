@@ -216,6 +216,10 @@ export interface AppFeatureToggles {
   showEventTimeline: boolean;
   showCriticalAlertBanner: boolean;
   showWardOverviewCharts: boolean;
+  showWardTrajectoryChart?: boolean;
+  showWardDistribution?: boolean;
+  showWardQuickFilter?: boolean;
+  showKpiMetricCards?: boolean;
   
   // Specific vital indicators
   showEtCO2: boolean;
@@ -228,6 +232,10 @@ export interface AppFeatureToggles {
   enableReportsTab: boolean;
   enableMicroWindows: boolean;
   enablePrototypeTab?: boolean;
+
+  // Simulation Lab View components
+  showDualEngineBanner?: boolean;
+  showSimulationRiskCard?: boolean;
 
   // Hidden patient IDs
   hiddenPatientIds: string[];
@@ -379,6 +387,47 @@ export interface SimulationBackendTestResult {
   };
   error?: string;
   errorDescription?: string;
+  ensemble_metadata?: {
+    is_ensemble: boolean;
+    api_weight: number;
+    backend_weight: number;
+    raw_api_probability?: number;
+    raw_backend_probability?: number;
+    clinical_assessment?: string;
+  };
+}
+
+export interface CareSenseEnsembleConfig {
+  enabled: boolean;
+  apiKey: string;
+  apiWeight: number; // e.g. 70
+  backendWeight: number; // e.g. 30
+  modelId: string;
+  lastTestedAt?: string;
+  lastTestStatus?: 'idle' | 'success' | 'error';
+  lastTestLatencyMs?: number;
+  lastTestMessage?: string;
+}
+
+export interface CareSenseAugmentedPredictionResult {
+  success: boolean;
+  rawApiProbability: number;
+  rawBackendProbability: number;
+  blendedProbability: number;
+  riskTier: RiskTier;
+  riskStatus: string;
+  apiWeight: number;
+  backendWeight: number;
+  isEnsembleActive: boolean;
+  clinicalAssessment?: string;
+  topContributingBiomarkers?: Array<{
+    feature: string;
+    impact: 'INCREASES_RISK' | 'DECREASES_RISK';
+    value: string | number;
+    details?: string;
+  }>;
+  latencyMs: number;
+  error?: string;
 }
 
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useCareSense } from '../../hooks/useCareSense';
 import { PWAInstallButton } from '../common/PWAInstallButton';
 import { OfflineIndicator } from '../common/OfflineIndicator';
@@ -14,6 +14,7 @@ import {
   Radio,
   Menu,
   Shield,
+  Lock,
 } from 'lucide-react';
 import { authService } from '../../services/authService';
 
@@ -32,10 +33,87 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebarMobile }) => {
     alerts,
     stats,
     setActiveTab,
+    isAdminUnlocked,
+    unlockAdminPanel,
+    addToast,
   } = useCareSense();
 
   const [showUserMenu, setShowUserMenu] = useState(false);
   const activeAlerts = alerts.filter(a => a.status === 'ACTIVE');
+
+  // Secret 5-click easter egg on the profile dropdown header component
+  // "when i click this component 5 times it want to open admin pannel other wise admin pannel want to be hiden and from all shortcuts"
+  const [componentClickCount, setComponentClickCount] = useState(0);
+  const clickTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleSecretComponentClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current);
+    }
+
+    const next = componentClickCount + 1;
+
+    if (next >= 5) {
+      setComponentClickCount(0);
+      unlockAdminPanel();
+      setActiveTab('admin');
+      setShowUserMenu(false);
+      addToast({
+        type: 'success',
+        title: 'Admin Access Authorized',
+        description: '5-click security handshake verified. Admin Command Center opened.',
+      });
+      return;
+    }
+
+    setComponentClickCount(next);
+
+    // Give visual hint if getting closer
+    if (next >= 2) {
+      addToast({
+        type: 'info',
+        title: 'Admin Authorization Sequence',
+        description: `${5 - next} more click${5 - next === 1 ? '' : 's'} to open Admin Panel...`,
+      });
+    }
+
+    // Reset after 3 seconds of inactivity
+    clickTimerRef.current = setTimeout(() => {
+      setComponentClickCount(0);
+    }, 3000);
+  };
+
+  // Also support tapping the profile button 5 times rapidly when menu is closed
+  const profileButtonClicksRef = useRef(0);
+  const profileButtonTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleProfileButtonClick = () => {
+    profileButtonClicksRef.current += 1;
+    if (profileButtonTimerRef.current) {
+      clearTimeout(profileButtonTimerRef.current);
+    }
+
+    if (profileButtonClicksRef.current >= 5) {
+      profileButtonClicksRef.current = 0;
+      unlockAdminPanel();
+      setActiveTab('admin');
+      setShowUserMenu(false);
+      addToast({
+        type: 'success',
+        title: 'Admin Access Authorized',
+        description: '5-click authorization verified. Admin Command Center opened.',
+      });
+      return;
+    }
+
+    profileButtonTimerRef.current = setTimeout(() => {
+      profileButtonClicksRef.current = 0;
+    }, 2500);
+
+    setShowUserMenu(prev => !prev);
+  };
 
   const handleSignOut = async () => {
     await authService.signOut();
@@ -132,8 +210,9 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebarMobile }) => {
         {/* User Profile Menu */}
         <div className="relative">
           <button
-            onClick={() => setShowUserMenu(!showUserMenu)}
-            className="flex items-center gap-2 rounded-xl border border-slate-200 p-1.5 hover:bg-slate-50 transition-colors"
+            onClick={handleProfileButtonClick}
+            className="flex items-center gap-2 rounded-xl border border-slate-200 p-1.5 hover:bg-slate-50 transition-colors cursor-pointer select-none"
+            title="Clinician Account (Tap 5 times to access Admin Panel)"
           >
             {currentUser?.avatar_url ? (
               <img
@@ -159,27 +238,36 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebarMobile }) => {
 
           {showUserMenu && (
             <div className="absolute right-0 mt-2 w-56 rounded-xl border border-slate-200 bg-white p-2 shadow-xl z-50 animate-in fade-in">
-              <div className="border-b border-slate-100 px-3 py-2">
-                <p className="text-xs font-bold text-slate-900">{currentUser?.full_name}</p>
-                <p className="text-[11px] text-slate-500 font-mono">{currentUser?.hospital_id}</p>
+              {/* Target component: clicking 5 times opens Admin Panel ("when i click this component 5 times it want to open admin pannel") */}
+              <div
+                onClick={handleSecretComponentClick}
+                className="border-b border-slate-100 px-3 py-2 cursor-pointer select-none transition hover:bg-slate-50 active:bg-slate-100 rounded-lg group"
+                title="Clinician Profile Details (Tap 5 times to open Admin Panel)"
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-bold text-slate-900 group-hover:text-indigo-950 transition-colors">
+                      {currentUser?.full_name}
+                    </p>
+                    <p className="text-[11px] text-slate-500 font-mono">
+                      {currentUser?.hospital_id}
+                    </p>
+                  </div>
+                  {componentClickCount > 0 && (
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-indigo-100 text-indigo-700 font-black text-[10px] animate-pulse">
+                      {componentClickCount}/5
+                    </span>
+                  )}
+                </div>
               </div>
+
               <div className="py-1">
-                <button
-                  onClick={() => {
-                    setActiveTab('admin');
-                    setShowUserMenu(false);
-                  }}
-                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-amber-700 hover:bg-amber-50 font-semibold"
-                >
-                  <Shield size={14} className="text-amber-600" />
-                  <span>Admin Control Panel</span>
-                </button>
                 <button
                   onClick={() => {
                     setActiveTab('settings');
                     setShowUserMenu(false);
                   }}
-                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-slate-700 hover:bg-slate-100 font-medium"
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-slate-700 hover:bg-slate-100 font-medium cursor-pointer"
                 >
                   <User size={14} className="text-slate-400" />
                   <span>Profile & Department</span>
@@ -188,7 +276,7 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebarMobile }) => {
               <div className="border-t border-slate-100 pt-1">
                 <button
                   onClick={handleSignOut}
-                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-rose-600 hover:bg-rose-50 font-medium"
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-rose-600 hover:bg-rose-50 font-medium cursor-pointer"
                 >
                   <LogOut size={14} />
                   <span>Sign Out Session</span>

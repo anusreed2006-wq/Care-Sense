@@ -30,7 +30,9 @@ import {
   Bed,
   ChevronDown,
   ChevronUp,
+  Sparkles,
 } from 'lucide-react';
+import { augmentedInferenceService } from '../services/augmentedInferenceService';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -501,6 +503,7 @@ export const SimulationLabView: React.FC = () => {
     selectPatientAndNavigate,
     updatePatientClinicalData,
     backendApiUrl,
+    featureToggles,
   } = useCareSense();
 
   // Find currently selected simulation patient
@@ -653,15 +656,75 @@ export const SimulationLabView: React.FC = () => {
           }
         );
 
+        // If CareSense Dual-Engine Ensemble is enabled in Admin Panel, evaluate cognitive pipeline and blend
+        if (augmentedInferenceService.isEnsembleActive() && result.success) {
+          try {
+            const augRes = await augmentedInferenceService.evaluateAugmentedSepsisRisk({
+              vitals: {
+                hr: vitals.hr,
+                o2sat: vitals.o2sat,
+                temp: vitals.temp,
+                sbp: vitals.sbp,
+                map: vitals.map,
+                dbp: vitals.dbp,
+                resp: vitals.resp,
+                etco2: vitals.etco2,
+              },
+              labs,
+              patientContext: {
+                age: icuContext.age,
+                gender: icuContext.gender,
+                patientCode: currentPatient.patient_code,
+                unit1: icuContext.unit1,
+                unit2: icuContext.unit2,
+                hospAdmTime: icuContext.hospAdmTime,
+                iculos: icuContext.iculos,
+              },
+              rawBackendProbability: result.risk_probability,
+            });
+
+            if (augRes.isEnsembleActive) {
+              result.risk_probability = augRes.blendedProbability;
+              result.risk_tier = augRes.riskTier;
+              result.risk_status = augRes.riskStatus;
+              result.ensemble_metadata = {
+                is_ensemble: true,
+                api_weight: augRes.apiWeight,
+                backend_weight: augRes.backendWeight,
+                raw_api_probability: augRes.rawApiProbability,
+                raw_backend_probability: augRes.rawBackendProbability,
+                clinical_assessment: augRes.clinicalAssessment,
+              };
+
+              if (result.trajectory && result.trajectory.length > 0) {
+                const lastIdx = result.trajectory.length - 1;
+                result.trajectory[lastIdx].risk_probability = augRes.blendedProbability;
+                result.trajectory[lastIdx].risk_tier = augRes.riskTier;
+                result.trajectory[lastIdx].risk_status = augRes.riskStatus;
+              }
+            }
+          } catch (augErr) {
+            console.warn('[CareSense Simulation] Augmented ensemble fallback:', augErr);
+          }
+        }
+
         setBackendResult(result);
 
         if (showToast) {
           if (result.success) {
-            addToast({
-              type: 'success',
-              title: 'XGBoost Prediction Updated',
-              description: `Risk: ${(result.risk_probability * 100).toFixed(1)}% (${result.risk_tier}) via ${result.model_version} in ${result.latencyMs}ms (26 labs & 8 vitals ingested)`,
-            });
+            if (result.ensemble_metadata?.is_ensemble) {
+              addToast({
+                type: 'success',
+                title: 'Dual-Engine Consensus Prediction',
+                description: `Blended Risk: ${(result.risk_probability * 100).toFixed(1)}% (${result.risk_tier}) via Ensemble (${result.ensemble_metadata.api_weight}% Cognitive / ${result.ensemble_metadata.backend_weight}% Base XGBoost)`,
+              });
+            } else {
+              addToast({
+                type: 'success',
+                title: 'XGBoost Prediction Updated',
+                description: `Risk: ${(result.risk_probability * 100).toFixed(1)}% (${result.risk_tier}) via ${result.model_version} in ${result.latencyMs}ms (26 labs & 8 vitals ingested)`,
+              });
+            }
           } else {
             addToast({
               type: 'critical',
@@ -1960,64 +2023,115 @@ export const SimulationLabView: React.FC = () => {
             </div>
           </div>
 
-          {/* Authentic XGBoost Risk Probability Card */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs relative overflow-hidden">
-            {isTestingBackend && (
-              <div className="absolute inset-0 bg-white/70 backdrop-blur-[1px] flex items-center justify-center z-10">
-                <div className="flex items-center gap-2 text-xs font-bold text-sky-700 bg-white px-3 py-1.5 rounded-xl shadow-md border border-sky-100">
-                  <RefreshCw size={14} className="animate-spin text-sky-600" />
-                  <span>Computing XGBoost Tree Explanations...</span>
+          {/* CareSense Dual-Engine Consensus Ensemble Banner (Toggleable in Admin Panel) */}
+          {featureToggles.showDualEngineBanner !== false && backendResult?.ensemble_metadata?.is_ensemble && (
+            <div className="rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50/90 via-white to-sky-50/90 p-4.5 shadow-xs transition-all duration-300 hover:shadow-sm hover:border-indigo-300">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-2xs">
+                    <Sparkles size={15} />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black tracking-tight text-indigo-950">
+                      CareSense Dual-Engine Consensus Ensemble Active
+                    </h4>
+                    <p className="text-[10px] text-slate-500">
+                      Blended with {backendResult.ensemble_metadata.api_weight}% Cognitive Pipeline + {backendResult.ensemble_metadata.backend_weight}% Base XGBoost
+                    </p>
+                  </div>
+                </div>
+                <span className="rounded-lg bg-indigo-100/90 border border-indigo-200 px-2.5 py-1 text-[10px] font-mono font-bold text-indigo-800 shadow-2xs">
+                  {backendResult.ensemble_metadata.api_weight}/{backendResult.ensemble_metadata.backend_weight} Consensus
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 mt-3.5 pt-2.5 border-t border-indigo-100 text-[11px] font-mono">
+                <div className="rounded-xl bg-white/90 p-2.5 border border-indigo-100 shadow-2xs">
+                  <span className="text-[10px] text-slate-400 block font-semibold">Cognitive Pipeline ({backendResult.ensemble_metadata.api_weight}%):</span>
+                  <span className="font-extrabold text-indigo-700 text-xs mt-0.5 block">
+                    {backendResult.ensemble_metadata.raw_api_probability !== undefined
+                      ? `${(backendResult.ensemble_metadata.raw_api_probability * 100).toFixed(1)}%`
+                      : 'Active'}
+                  </span>
+                </div>
+                <div className="rounded-xl bg-white/90 p-2.5 border border-slate-200 shadow-2xs">
+                  <span className="text-[10px] text-slate-400 block font-semibold">CareSense Base XGBoost ({backendResult.ensemble_metadata.backend_weight}%):</span>
+                  <span className="font-extrabold text-slate-700 text-xs mt-0.5 block">
+                    {backendResult.ensemble_metadata.raw_backend_probability !== undefined
+                      ? `${(backendResult.ensemble_metadata.raw_backend_probability * 100).toFixed(1)}%`
+                      : 'Active'}
+                  </span>
                 </div>
               </div>
-            )}
 
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-extrabold uppercase tracking-wider text-slate-500">
-                Calibrated Sepsis Risk Probability
-              </span>
-              <RiskBadge tier={mappedTier} size="md" pulse={mappedTier === 'CRITICAL' || mappedTier === 'ELEVATED'} />
+              {backendResult.ensemble_metadata.clinical_assessment && (
+                <p className="mt-2.5 text-[11px] text-indigo-950 bg-white/80 rounded-xl p-2.5 border border-indigo-100 leading-relaxed">
+                  <span className="font-bold text-indigo-700">Consensus Assessment:</span> {backendResult.ensemble_metadata.clinical_assessment}
+                </p>
+              )}
             </div>
+          )}
 
-            <div className="mt-4 flex items-baseline gap-2">
-              <span className="text-5xl font-black font-mono tracking-tight text-slate-900">
-                {(backendResult?.risk_probability ?? 0.085).toFixed(3)}
-              </span>
-              <span className="text-base font-bold text-slate-500">
-                ({((backendResult?.risk_probability ?? 0.085) * 100).toFixed(1)}%)
-              </span>
-            </div>
+          {/* Authentic XGBoost Risk Probability Card (Toggleable in Admin Panel) */}
+          {(featureToggles.showRiskScoreCard !== false && featureToggles.showSimulationRiskCard !== false) && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs relative overflow-hidden transition-all duration-300 hover:shadow-sm hover:border-slate-300">
+              {isTestingBackend && (
+                <div className="absolute inset-0 bg-white/70 backdrop-blur-[1px] flex items-center justify-center z-10">
+                  <div className="flex items-center gap-2 text-xs font-bold text-sky-700 bg-white px-3 py-1.5 rounded-xl shadow-md border border-sky-100">
+                    <RefreshCw size={14} className="animate-spin text-sky-600" />
+                    <span>Computing XGBoost Tree Explanations...</span>
+                  </div>
+                </div>
+              )}
 
-            <p className="text-xs font-bold text-slate-700 mt-2">
-              Model Diagnostic Subtype:{' '}
-              <span className="font-mono text-sky-800">
-                {backendResult?.risk_status || (mappedTier === 'CRITICAL' ? 'SEVERE_SEPTIC_SHOCK' : mappedTier === 'ELEVATED' ? 'SEPSIS_DECOMPENSATION' : 'MONITORING')}
-              </span>
-            </p>
-
-            {/* Risk Tier Progress Bar */}
-            <div className="mt-4">
-              <div className="h-2.5 w-full rounded-full bg-slate-100 overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-all duration-500 ${
-                    mappedTier === 'CRITICAL'
-                      ? 'bg-rose-600'
-                      : mappedTier === 'ELEVATED'
-                      ? 'bg-orange-500'
-                      : mappedTier === 'WATCH'
-                      ? 'bg-amber-500'
-                      : 'bg-emerald-500'
-                  }`}
-                  style={{ width: `${Math.min(100, Math.max(5, (backendResult?.risk_probability ?? 0.085) * 100))}%` }}
-                />
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-extrabold uppercase tracking-wider text-slate-500">
+                  Calibrated Sepsis Risk Probability
+                </span>
+                <RiskBadge tier={mappedTier} size="md" pulse={mappedTier === 'CRITICAL' || mappedTier === 'ELEVATED'} />
               </div>
-              <div className="flex justify-between text-[10px] font-bold text-slate-400 mt-1">
-                <span>0% Low</span>
-                <span>3% Watch</span>
-                <span>6% Elevated</span>
-                <span>10%+ Critical</span>
+
+              <div className="mt-4 flex items-baseline gap-2">
+                <span className="text-5xl font-black font-mono tracking-tight text-slate-900">
+                  {(backendResult?.risk_probability ?? 0.085).toFixed(3)}
+                </span>
+                <span className="text-base font-bold text-slate-500">
+                  ({((backendResult?.risk_probability ?? 0.085) * 100).toFixed(1)}%)
+                </span>
+              </div>
+
+              <p className="text-xs font-bold text-slate-700 mt-2">
+                Model Diagnostic Subtype:{' '}
+                <span className="font-mono text-sky-800">
+                  {backendResult?.risk_status || (mappedTier === 'CRITICAL' ? 'SEVERE_SEPTIC_SHOCK' : mappedTier === 'ELEVATED' ? 'SEPSIS_DECOMPENSATION' : 'MONITORING')}
+                </span>
+              </p>
+
+              {/* Risk Tier Progress Bar */}
+              <div className="mt-4">
+                <div className="h-2.5 w-full rounded-full bg-slate-100 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${
+                      mappedTier === 'CRITICAL'
+                        ? 'bg-rose-600'
+                        : mappedTier === 'ELEVATED'
+                        ? 'bg-orange-500'
+                        : mappedTier === 'WATCH'
+                        ? 'bg-amber-500'
+                        : 'bg-emerald-500'
+                    }`}
+                    style={{ width: `${Math.min(100, Math.max(5, (backendResult?.risk_probability ?? 0.085) * 100))}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-[10px] font-bold text-slate-400 mt-1">
+                  <span>0% Low</span>
+                  <span>3% Watch</span>
+                  <span>6% Elevated</span>
+                  <span>10%+ Critical</span>
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
           {/* 24-Hour Continuous Sepsis Risk Progression Trajectory Chart */}
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">

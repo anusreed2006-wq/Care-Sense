@@ -12,17 +12,22 @@ import {
   NavigationTab,
   AppMode,
   VitalSigns,
+  LabResult,
   RiskPrediction,
+  RiskExplanation,
+  RiskTier,
   AppFeatureToggles,
   MetricHistoryModalData,
   CareSenseBackendHealth,
   BackendConnectionTestResult,
+  CareSenseEnsembleConfig,
 } from '../types';
 import { authService } from '../services/authService';
 import { patientService } from '../services/patientService';
 import { alertService } from '../services/alertService';
 import { realtimeService } from '../services/realtimeService';
 import { caresenseApi } from '../services/caresenseApi';
+import { augmentedInferenceService } from '../services/augmentedInferenceService';
 import { buildEnrichedPatient, ALL_DEMO_PATIENTS } from '../data/demoData';
 import { generateMetricHistory } from '../utils/metricHistoryGenerator';
 
@@ -36,6 +41,10 @@ const DEFAULT_FEATURE_TOGGLES: AppFeatureToggles = {
   showEventTimeline: true,
   showCriticalAlertBanner: true,
   showWardOverviewCharts: true,
+  showWardTrajectoryChart: true,
+  showWardDistribution: true,
+  showWardQuickFilter: true,
+  showKpiMetricCards: true,
   showEtCO2: true,
   showShockIndex: true,
   showBaseExcess: true,
@@ -44,6 +53,8 @@ const DEFAULT_FEATURE_TOGGLES: AppFeatureToggles = {
   enableReportsTab: true,
   enableMicroWindows: true,
   enablePrototypeTab: true,
+  showDualEngineBanner: true,
+  showSimulationRiskCard: true,
   hiddenPatientIds: [],
 };
 
@@ -95,6 +106,9 @@ interface CareSenseContextType {
   isAdminAuthenticated: boolean;
   loginAdmin: (user: string, pass: string) => boolean;
   logoutAdmin: () => void;
+  isAdminUnlocked: boolean;
+  unlockAdminPanel: () => void;
+  lockAdminPanel: () => void;
 
   // Feature Toggles (Controlling what appears in main app)
   featureToggles: AppFeatureToggles;
@@ -119,6 +133,13 @@ interface CareSenseContextType {
   backendApiStatus: 'ready' | 'connecting' | 'error' | 'offline';
   backendHealth: CareSenseBackendHealth | null;
   triggerLivePrediction: () => Promise<void>;
+
+  // CareSense Cognitive Dual-Engine Ensemble
+  ensembleConfig: CareSenseEnsembleConfig;
+  updateEnsembleConfig: (updates: Partial<CareSenseEnsembleConfig>) => CareSenseEnsembleConfig;
+  toggleEnsemble: (enabled?: boolean) => boolean;
+  setEnsembleWeights: (apiWeight: number) => CareSenseEnsembleConfig;
+  testEnsembleKey: (key?: string) => Promise<{ success: boolean; latencyMs: number; message: string; sampleProbability?: number }>;
 }
 
 const CareSenseContext = createContext<CareSenseContextType | undefined>(undefined);
@@ -246,6 +267,35 @@ export const CareSenseProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     authService.signInAsDemo('clinician').then(u => setCurrentUser(u));
   }, []);
 
+  // Secret 5-click Admin Panel Unlocked State
+  // Default is false ("other wise admin pannel want to be hiden and from all shortcuts")
+  const [isAdminUnlocked, setIsAdminUnlocked] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem('caresense_admin_unlocked') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const unlockAdminPanel = useCallback(() => {
+    setIsAdminUnlocked(true);
+    try {
+      sessionStorage.setItem('caresense_admin_unlocked', 'true');
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const lockAdminPanel = useCallback(() => {
+    setIsAdminUnlocked(false);
+    try {
+      sessionStorage.removeItem('caresense_admin_unlocked');
+    } catch {
+      // ignore
+    }
+    setActiveTab(prev => (prev === 'admin' ? 'dashboard' : prev));
+  }, []);
+
   // Micro Window Open / Close
   const openMetricHistory = useCallback((metricKey: string, currentValue: number, isCritical = false) => {
     if (!featureToggles.enableMicroWindows) return;
@@ -264,6 +314,85 @@ export const CareSenseProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       if (!prev || prev.patient.id !== updated.id) return prev;
       return { ...prev, patient: updated };
     });
+  }, []);
+
+  // Visible patients filtered by admin feature toggles
+  const visiblePatients = patients.filter(p => !featureToggles.hiddenPatientIds.includes(p.id));
+
+  // Configurable CareSense Backend URL state
+  const [backendApiUrl, setBackendApiUrlState] = useState<string>(() => caresenseApi.getApiUrl());
+
+  // CareSense Cognitive Dual-Engine Ensemble state
+  const [ensembleConfig, setEnsembleConfigState] = useState<CareSenseEnsembleConfig>(() => augmentedInferenceService.getConfig());
+
+  const updateEnsembleConfig = useCallback((updates: Partial<CareSenseEnsembleConfig>) => {
+    const updated = augmentedInferenceService.saveConfig(updates);
+    setEnsembleConfigState(updated);
+    return updated;
+  }, []);
+
+  const toggleEnsemble = useCallback((enabled?: boolean) => {
+    const nextState = augmentedInferenceService.toggleEnabled(enabled);
+    setEnsembleConfigState(augmentedInferenceService.getConfig());
+    return nextState;
+  }, []);
+
+  const setEnsembleWeights = useCallback((apiWeight: number) => {
+    const updated = augmentedInferenceService.setWeights(apiWeight);
+    setEnsembleConfigState(updated);
+    return updated;
+  }, []);
+
+  const testEnsembleKey = useCallback(async (key?: string) => {
+    const res = await augmentedInferenceService.testApiKeyConnection(key);
+    setEnsembleConfigState(augmentedInferenceService.getConfig());
+    return res;
+  }, []);
+
+  /**
+   * Helper to blend CareSense XGBoost prediction with Cognitive Engine when ensemble is active
+   */
+  const blendPredictionWithCognitiveEngine = useCallback(async (
+    patient: Patient,
+    vitals: Partial<VitalSigns>,
+    labs: Partial<LabResult>,
+    res: {
+      prediction: RiskPrediction;
+      explanations: RiskExplanation[];
+      trajectory: { time: string; risk: number; tier: RiskTier }[];
+      dataQualityFlags: string[];
+      backendPatientId: string;
+      clinicallyValidated: boolean;
+      notice?: string;
+    }
+  ) => {
+    if (augmentedInferenceService.isEnsembleActive()) {
+      try {
+        const aug = await augmentedInferenceService.evaluateAugmentedSepsisRisk({
+          vitals,
+          labs,
+          patientContext: {
+            age: patient.age,
+            gender: patient.gender,
+            patientCode: patient.patient_code,
+          },
+          rawBackendProbability: res.prediction.risk_probability,
+        });
+
+        if (aug.isEnsembleActive) {
+          res.prediction.risk_probability = aug.blendedProbability;
+          res.prediction.risk_tier = aug.riskTier;
+          res.prediction.risk_status = aug.riskStatus;
+          res.prediction.notice = `CareSense Dual-Engine Ensemble (${aug.apiWeight}% Cognitive / ${aug.backendWeight}% Base XGBoost)`;
+          if (res.trajectory && res.trajectory.length > 0) {
+            res.trajectory[res.trajectory.length - 1].risk = aug.blendedProbability;
+            res.trajectory[res.trajectory.length - 1].tier = aug.riskTier;
+          }
+        }
+      } catch (err) {
+        console.warn('[CareSense Ensemble] Blending warning, using base backend prediction:', err);
+      }
+    }
   }, []);
 
   const updatePatientClinicalData = useCallback((
@@ -290,7 +419,8 @@ export const CareSenseProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           updatedLabs,
           prev.previousVitals,
           prev.previousLabs
-        ).then(res => {
+        ).then(async res => {
+          await blendPredictionWithCognitiveEngine(prev.patient, updatedVitals, updatedLabs, res);
           setActivePatientData(curr => {
             if (!curr || curr.patient.id !== patientId) return curr;
             return {
@@ -313,13 +443,7 @@ export const CareSenseProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
       return updated;
     });
-  }, [appMode]);
-
-  // Visible patients filtered by admin feature toggles
-  const visiblePatients = patients.filter(p => !featureToggles.hiddenPatientIds.includes(p.id));
-
-  // Configurable CareSense Backend URL state
-  const [backendApiUrl, setBackendApiUrlState] = useState<string>(() => caresenseApi.getApiUrl());
+  }, [appMode, blendPredictionWithCognitiveEngine]);
 
   const refreshBackendHealth = useCallback(async () => {
     setBackendApiStatus('connecting');
@@ -423,8 +547,9 @@ export const CareSenseProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         enriched.latestLabs,
         enriched.previousVitals,
         enriched.previousLabs
-      ).then(res => {
+      ).then(async res => {
         if (isCancelled) return;
+        await blendPredictionWithCognitiveEngine(p, enriched.latestVitals, enriched.latestLabs, res);
         setActivePatientData({
           ...enriched,
           currentPrediction: res.prediction,
@@ -449,7 +574,7 @@ export const CareSenseProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return () => {
       isCancelled = true;
     };
-  }, [selectedPatientId, patients, alerts, appMode]);
+  }, [selectedPatientId, patients, alerts, appMode, blendPredictionWithCognitiveEngine]);
 
   // Realtime Telemetry & Alert Subscriptions
   useEffect(() => {
@@ -543,6 +668,12 @@ export const CareSenseProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         activePatientData.previousVitals,
         activePatientData.previousLabs
       );
+      await blendPredictionWithCognitiveEngine(
+        activePatientData.patient,
+        activePatientData.latestVitals,
+        activePatientData.latestLabs,
+        res
+      );
       setActivePatientData(prev => {
         if (!prev) return prev;
         return {
@@ -556,10 +687,11 @@ export const CareSenseProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           clinicallyValidated: res.clinicallyValidated,
         };
       });
+      const ensembleNotice = res.prediction.notice ? ` [${res.prediction.notice}]` : '';
       addToast({
         type: 'success',
         title: 'Model Prediction Synced',
-        description: `Verified Render backend returned ${(res.prediction.risk_probability * 100).toFixed(1)}% risk (${res.prediction.risk_tier}).`,
+        description: `Verified CareSense prediction returned ${(res.prediction.risk_probability * 100).toFixed(1)}% risk (${res.prediction.risk_tier})${ensembleNotice}.`,
       });
     } catch (err: any) {
       console.error('[CareSense API] Manual trigger failed:', err);
@@ -571,7 +703,7 @@ export const CareSenseProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     } finally {
       setIsLiveInferring(false);
     }
-  }, [activePatientData, addToast]);
+  }, [activePatientData, addToast, blendPredictionWithCognitiveEngine]);
 
   return (
     <CareSenseContext.Provider
@@ -611,6 +743,9 @@ export const CareSenseProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         isAdminAuthenticated,
         loginAdmin,
         logoutAdmin,
+        isAdminUnlocked,
+        unlockAdminPanel,
+        lockAdminPanel,
         featureToggles,
         setFeatureToggle,
         resetFeatureToggles,
@@ -625,6 +760,11 @@ export const CareSenseProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         backendApiStatus,
         backendHealth,
         triggerLivePrediction,
+        ensembleConfig,
+        updateEnsembleConfig,
+        toggleEnsemble,
+        setEnsembleWeights,
+        testEnsembleKey,
       }}
     >
       {children}

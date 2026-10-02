@@ -31,7 +31,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isMobileOpen,
   onCloseMobile,
 }) => {
-  const { activeTab, setActiveTab, stats, alerts, featureToggles, isAdminAuthenticated } = useCareSense();
+  const { activeTab, setActiveTab, stats, alerts, featureToggles, isAdminAuthenticated, isAdminUnlocked } = useCareSense();
 
   const activeAlertCount = alerts.filter(a => a.status === 'ACTIVE').length;
 
@@ -74,6 +74,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       badgeColor: isAdminAuthenticated
         ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
         : 'bg-amber-500/20 text-amber-300 border border-amber-500/30',
+      enabled: isAdminUnlocked,
     },
   ];
 
